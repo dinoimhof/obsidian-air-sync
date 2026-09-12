@@ -15,7 +15,12 @@
 		"lib": [
 			"DOM",
 			"ES2022"
-		]
+		],
+		"paths": {
+			"@protontech/crypto": [
+				"./src/platform/protontech-crypto.d.ts"
+			]
+		}
 	},
 	"include": [
 		"src/**/*.ts",

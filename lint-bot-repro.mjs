@@ -27,8 +27,30 @@ export const REPRO_TARGETS = [
 ];
 export const REPRO_ESLINT_ARGS = ["--format", "json", "--ignore-pattern", "**/*.test.ts", ...REPRO_TARGETS];
 
-const DIRECT_RUNTIME_PACKAGES = ["obsidian", "fflate", "ignore", "js-md5", "node-diff3"];
+const DIRECT_RUNTIME_PACKAGES = [
+	"obsidian",
+	"fflate",
+	"ignore",
+	"js-md5",
+	"node-diff3",
+	"@protontech/drive-sdk",
+	"@protontech/crypto",
+];
+// obsidian is always external (never bundled into main.js), so it's excluded from
+// the esbuild bundle-contents probe below; every other runtime package must ship in
+// the production bundle.
+const BUNDLE_CHECKED_RUNTIME_PACKAGES = DIRECT_RUNTIME_PACKAGES.filter((name) => name !== "obsidian");
 const TEST_RUNNER_PACKAGES = ["vitest"];
+// Real, permanent tsconfig.json "paths" redirects to a project-owned ambient stub —
+// distinct from the temporary untyped-fixture injection below, which simulates the
+// community scanner seeing NO declarations at all. A permanently-stubbed package's
+// own real declarations are unusable for type-checking (e.g. raw, uncompiled TS
+// source with no .d.ts boundary), so every workspace redirects it to our stub,
+// except when it's also being actively injected-untyped for that workspace's
+// simulation (that takes precedence — see assertTypeResolution).
+const PERMANENT_TYPE_STUBS = {
+	"@protontech/crypto": "src/platform/protontech-crypto.d.ts",
+};
 const ALL_RESOLUTION_PACKAGES = [...DIRECT_RUNTIME_PACKAGES, ...TEST_RUNNER_PACKAGES];
 const COMMON_PROJECT_FILES = [
 	"package.json",
@@ -84,7 +106,9 @@ function injectUntypedBoundary(projectRoot, workspace, packageNames, fixture) {
 
 	const tsconfigPath = join(workspace, "tsconfig.json");
 	const tsconfig = JSON.parse(readFileSync(tsconfigPath, "utf8"));
-	tsconfig.compilerOptions.paths = {};
+	// Merge, don't wipe: a permanent stub redirect (PERMANENT_TYPE_STUBS) must survive
+	// injection for any package not itself being simulated as untyped here.
+	tsconfig.compilerOptions.paths = { ...tsconfig.compilerOptions.paths };
 	for (const packageName of packageNames) {
 		tsconfig.compilerOptions.paths[packageName] = [
 			`./${fixture}`,
@@ -106,7 +130,7 @@ function workspaceDescriptor(workspace) {
 
 function expectedInjectedTsconfig(normal, packageNames, fixture) {
 	const expected = structuredClone(normal);
-	expected.compilerOptions.paths = {};
+	expected.compilerOptions.paths = { ...expected.compilerOptions.paths };
 	for (const packageName of packageNames) expected.compilerOptions.paths[packageName] = [`./${fixture}`];
 	return expected;
 }
@@ -219,6 +243,13 @@ function assertTypeResolution(projectRoot, workspace, injectedPackages = [], fix
 					`TypeScript resolved ${packageName} to ${actualPath}; expected pre-fix fixture ${expectedPath}`,
 				);
 			}
+		} else if (packageName in PERMANENT_TYPE_STUBS) {
+			const expectedPath = resolve(join(workspace, PERMANENT_TYPE_STUBS[packageName]));
+			if (actualPath !== expectedPath) {
+				throw new Error(
+					`TypeScript resolved ${packageName} to ${actualPath}; expected the permanent ambient stub ${expectedPath}`,
+				);
+			}
 		} else if (!actualPath.includes(`/node_modules/${packageName}/`)) {
 			throw new Error(
 				`TypeScript resolved ${packageName} to ${actualPath}; expected installed dependency declarations`,
@@ -238,7 +269,9 @@ async function assertRuntimeBundleResolution(projectRoot) {
 				'import ignore from "ignore";',
 				'import md5 from "js-md5";',
 				'import * as diff3 from "node-diff3";',
-				"globalThis.__airSyncRuntimeResolution = [fflate, ignore, md5, diff3];",
+				'import { VERSION as protonDriveSdkVersion } from "@protontech/drive-sdk";',
+				'import { CryptoProxy } from "@protontech/crypto";',
+				"globalThis.__airSyncRuntimeResolution = [fflate, ignore, md5, diff3, protonDriveSdkVersion, CryptoProxy];",
 			].join("\n"),
 			loader: "ts",
 			resolveDir: projectRoot,
@@ -252,7 +285,7 @@ async function assertRuntimeBundleResolution(projectRoot) {
 		write: false,
 	});
 	const inputs = Object.keys(result.metafile.inputs).map((input) => input.replaceAll("\\", "/"));
-	for (const packageName of ["fflate", "ignore", "js-md5", "node-diff3"]) {
+	for (const packageName of BUNDLE_CHECKED_RUNTIME_PACKAGES) {
 		if (!inputs.some((input) => input.includes(`node_modules/${packageName}/`))) {
 			throw new Error(`esbuild bundle does not contain the runtime implementation for ${packageName}`);
 		}
@@ -365,8 +398,11 @@ const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(imp
 if (isMain) {
 	try {
 		const result = await runLintBotReproduction();
+		const runtimeInjected = DIRECT_RUNTIME_PACKAGES.length;
+		const vitestInjected = TEST_RUNNER_PACKAGES.length;
+		const bundleChecked = BUNDLE_CHECKED_RUNTIME_PACKAGES.length;
 		process.stdout.write(
-			`${result.classification.message}; TypeScript resolved 5/5 runtime and 1/1 Vitest injections to isolated fixtures; esbuild bundled 4/4 runtime implementations; source/config hashes matched\n`,
+			`${result.classification.message}; TypeScript resolved ${runtimeInjected}/${runtimeInjected} runtime and ${vitestInjected}/${vitestInjected} Vitest injections to isolated fixtures; esbuild bundled ${bundleChecked}/${bundleChecked} runtime implementations; source/config hashes matched\n`,
 		);
 	} catch (error) {
 		process.stderr.write(`lint-bot repro failed: ${error.message}\n`);

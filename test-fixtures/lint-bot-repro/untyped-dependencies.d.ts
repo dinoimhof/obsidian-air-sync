@@ -3,3 +3,5 @@ declare module "fflate";
 declare module "ignore";
 declare module "js-md5";
 declare module "node-diff3";
+declare module "@protontech/drive-sdk";
+declare module "@protontech/crypto";
