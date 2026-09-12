@@ -48,7 +48,7 @@ npm run lint && npm run lint:bot-repro && npm run build && npm run test:coverage
 - `npm run lint` — ESLint (`--max-warnings 0`), including the `eslint-plugin-obsidianmd`
   ruleset the community submission bot runs.
 - `npm run lint:bot-repro` — lints production source in three isolated environments:
-  installed declarations, the five runtime dependencies deliberately made untyped,
+  installed declarations, the seven runtime dependencies deliberately made untyped,
   and Vitest deliberately made untyped. Every pass must report zero
   `@typescript-eslint/no-unsafe-*` findings. This models
   the community Dashboard source scan, which may analyse a submitted commit without
@@ -103,14 +103,23 @@ build provenance. The full procedure is documented in the Releases section of
 
 ## Security
 
-Air Sync stores OAuth tokens in Obsidian's secret storage. If you discover a security
-vulnerability, please report it privately — **do not** open a public issue. Use the
-**Report a vulnerability** button on the repository's
-[Security tab](https://github.com/takezoh/obsidian-air-sync/security); if private
-reporting isn't available there, reach the maintainer via their GitHub profile
-([@takezoh](https://github.com/takezoh)).
+Air Sync stores OAuth tokens and other backend session credentials in Obsidian's
+secret storage. If you discover a security vulnerability, please report it privately
+— **do not** open a public issue. Use the **Report a vulnerability** button on the
+repository's [Security tab](https://github.com/takezoh/obsidian-air-sync/security); if
+private reporting isn't available there, reach the maintainer via their GitHub
+profile ([@takezoh](https://github.com/takezoh)).
 
 ## License
 
 By contributing, you agree that your contributions are licensed under the project's
-[MIT License](LICENSE).
+[MIT License](LICENSE) — **except** for the Proton Drive backend
+(`src/fs/protondrive/**` and its dedicated `src/platform/proton*` files), which bundles
+a GPL-3.0 dependency (`@protontech/crypto`) and is licensed **GPL-3.0-or-later**
+instead, marked by an `SPDX-License-Identifier` header on each such file. This does not
+change the license of any pre-existing file — MIT and GPL-3.0 code coexist in this
+repository, but **a build that includes the Proton Drive backend is a combined work
+subject to GPL-3.0 for that distribution.** See
+[docs/protondrive-backend.md](docs/protondrive-backend.md) for the full rationale. If
+you're contributing to that backend specifically, add the same SPDX header to any new
+file you create there.

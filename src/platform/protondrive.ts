@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// This file bundles @protontech/drive-sdk (GPL-3.0) into the distributed main.js;
+// see docs/protondrive-backend.md for the licensing rationale. The rest of this
+// project (see LICENSE) remains MIT and is unaffected.
 import * as driveSdkRuntime from "@protontech/drive-sdk";
 
 const runtimeValue: unknown = driveSdkRuntime;

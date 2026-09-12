@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Kept consistent with the rest of the Proton Drive integration's files even though
+// this stub is type-only and ships zero bytes into main.js; see
+// docs/protondrive-backend.md for the licensing rationale. The rest of this project
+// (see LICENSE) remains MIT and is unaffected.
+//
 // Ambient type stub for @protontech/crypto, redirected here via tsconfig.json's
 // "paths": the real package ships raw TypeScript source as its only declarations,
 // with no compiled .d.ts boundary, so `tsc -noEmit` would otherwise fully type-check
