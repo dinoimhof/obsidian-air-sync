@@ -5,3 +5,5 @@ declare module "js-md5";
 declare module "node-diff3";
 declare module "@protontech/drive-sdk";
 declare module "@protontech/crypto";
+declare module "@protontech/crypto/proxy/endpoint/api.ts";
+declare module "@protontech/crypto/srp";

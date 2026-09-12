@@ -48,7 +48,7 @@ npm run lint && npm run lint:bot-repro && npm run build && npm run test:coverage
 - `npm run lint` — ESLint (`--max-warnings 0`), including the `eslint-plugin-obsidianmd`
   ruleset the community submission bot runs.
 - `npm run lint:bot-repro` — lints production source in three isolated environments:
-  installed declarations, the seven runtime dependencies deliberately made untyped,
+  installed declarations, the nine runtime dependencies deliberately made untyped,
   and Vitest deliberately made untyped. Every pass must report zero
   `@typescript-eslint/no-unsafe-*` findings. This models
   the community Dashboard source scan, which may analyse a submitted commit without

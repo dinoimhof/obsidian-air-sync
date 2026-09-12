@@ -255,7 +255,7 @@ already passed the remote service.
 |---|---|
 | **Prevents** | Shipping hundreds of `error`/`any` diagnostics when the community scanner does not install dependency declarations; weakening the five unsafe rules while normal lint happens to stay green |
 | **Where** | `package-lock.json`, `tsconfig.json`, `lint-bot-repro.mjs`, its pure classifier and `node:test` contract, and the isolated fixtures under `test-fixtures/lint-bot-repro/` |
-| **How** | Lints identical production source and ESLint configuration three times: with installed declarations, with the seven direct runtime dependencies replaced by an untyped declaration, and with Vitest replaced independently. All candidates must exit 0 with zero findings from all five unsafe rule families. |
+| **How** | Lints identical production source and ESLint configuration three times: with installed declarations, with the nine direct runtime dependencies replaced by an untyped declaration, and with Vitest replaced independently. All candidates must exit 0 with zero findings from all five unsafe rule families. |
 | **Exception** | None. Do not cast, disable rules, or update the contract to hide a source or declaration failure. |
 
 Do not copy dependency declarations into the repository. The community scanner lints
@@ -265,7 +265,7 @@ their declaration files are owned by `package-lock.json` and restored with `npm 
 
 The injected process models the community scanner's dependency-less source pass. The
 wrapper exits **0** only after its negative classifier tests pass, all three candidates exit
-0 with zero unsafe findings, TypeScript proves that all seven runtime imports and Vitest resolve
+0 with zero unsafe findings, TypeScript proves that all nine runtime imports and Vitest resolve
 to their independently injected fixtures while non-injected boundaries resolve from
 `node_modules` — except a package with a *permanent* type stub (see below), which
 resolves to that stub in every workspace instead — and the effective configs match. A
@@ -280,25 +280,33 @@ run the command again; the repro deliberately has no download fallback.
 
 The same command runs an esbuild metafile probe for fflate, ignore, js-md5,
 node-diff3, @protontech/drive-sdk, and @protontech/crypto. It fails if the bundle no
-longer contains each package's JavaScript implementation.
+longer contains each package's JavaScript implementation. Two of the nine tracked
+specifiers are subpaths of `@protontech/crypto` (`/proxy/endpoint/api.ts`, `/srp`) —
+the probe dedupes to one representative specifier per **package** rather than
+checking each subpath's own on-disk path, since a package's `exports` map can remap a
+subpath to an arbitrarily different physical file (e.g. `/srp` → `.../src/srp/index.ts`),
+so there is no reliable way to predict a subpath's bundled path from its specifier
+alone; the bare specifier's directory-prefix check already proves that package as a
+whole isn't externalized.
 
-Production modules reach those seven packages only through `src/platform/`. Each
-boundary receives an unresolved runtime import as `unknown`, validates the small shape
-the plugin uses, and exposes first-party types to the rest of `src`. This keeps the
+Production modules reach those packages only through `src/platform/`. Each boundary
+receives an unresolved runtime import as `unknown`, validates the small shape the
+plugin uses, and exposes first-party types to the rest of `src`. This keeps the
 runtime bundle unchanged while preventing a missing third-party declaration from
 poisoning application types.
 
-`@protontech/crypto` additionally needs a **permanent** ambient type stub
-(`src/platform/protontech-crypto.d.ts`, redirected via `tsconfig.json`'s `paths`) —
-unlike the other six packages, it ships raw, uncompiled TypeScript source as its only
-declarations, so `tsc -noEmit` would otherwise fully type-check Proton's own internal
-source and fail on pre-existing issues there. This redirect is TypeScript-only:
-esbuild only honors `paths` when `baseUrl` is also set, and `tsconfig.json`
-deliberately has none, so esbuild bundles the real package while `tsc` sees the
-stub. `lint-bot-repro.mjs`'s `PERMANENT_TYPE_STUBS` mirrors this redirect into the
-untyped-simulation workspaces (merged, not wiped, so it survives injection of the
-*other* packages there) so the real, permanent stub stays authoritative everywhere
-except where a package is itself being actively simulated as untyped.
+`@protontech/crypto` (bare, plus its two subpaths above) additionally needs a
+**permanent** ambient type stub (`src/platform/protontech-crypto.d.ts`, redirected via
+`tsconfig.json`'s `paths`) — unlike the other packages, it ships raw, uncompiled
+TypeScript source as its only declarations, so `tsc -noEmit` would otherwise fully
+type-check Proton's own internal source and fail on pre-existing issues there. This
+redirect is TypeScript-only: esbuild only honors `paths` when `baseUrl` is also set,
+and `tsconfig.json` deliberately has none, so esbuild bundles the real package while
+`tsc` sees the stub. `lint-bot-repro.mjs`'s `PERMANENT_TYPE_STUBS` mirrors this
+redirect into the untyped-simulation workspaces (merged, not wiped, so it survives
+injection of the *other* packages there) so the real, permanent stub stays
+authoritative everywhere except where a package is itself being actively simulated as
+untyped.
 
 If either candidate reports unsafe findings, the fix is
 incomplete. If the wrapper reports config, resolution, spawn, JSON, or exit-status

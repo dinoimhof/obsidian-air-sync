@@ -35,11 +35,35 @@ const DIRECT_RUNTIME_PACKAGES = [
 	"node-diff3",
 	"@protontech/drive-sdk",
 	"@protontech/crypto",
+	"@protontech/crypto/proxy/endpoint/api.ts",
+	"@protontech/crypto/srp",
 ];
-// obsidian is always external (never bundled into main.js), so it's excluded from
-// the esbuild bundle-contents probe below; every other runtime package must ship in
-// the production bundle.
-const BUNDLE_CHECKED_RUNTIME_PACKAGES = DIRECT_RUNTIME_PACKAGES.filter((name) => name !== "obsidian");
+/**
+ * The npm package a specifier belongs to, ignoring any subpath (scoped packages keep
+ * their scope segment, e.g. "@protontech/crypto/srp" -> "@protontech/crypto").
+ */
+function packageOf(specifier) {
+	const segments = specifier.split("/");
+	return specifier.startsWith("@") ? segments.slice(0, 2).join("/") : segments[0];
+}
+
+// obsidian is always external (never bundled into main.js), so it's excluded from the
+// esbuild bundle-contents probe below; every other runtime package must ship in the
+// production bundle. Deduped to one representative specifier per package: a package's
+// exports map can remap a subpath to an arbitrarily different physical file (e.g.
+// "@protontech/crypto/srp" -> ".../src/srp/index.ts"), so there is no reliable way to
+// predict a subpath's on-disk path from the specifier alone — proving the package's
+// FIRST specifier bundled real code already proves that package isn't externalized.
+const BUNDLE_CHECKED_RUNTIME_PACKAGES = (() => {
+	const byPackage = new Map();
+	for (const name of DIRECT_RUNTIME_PACKAGES) {
+		if (name === "obsidian") continue;
+		// First occurrence wins — every package lists its bare specifier before any
+		// subpath, and only the bare specifier's directory-prefix check is reliable.
+		if (!byPackage.has(packageOf(name))) byPackage.set(packageOf(name), name);
+	}
+	return [...byPackage.values()];
+})();
 const TEST_RUNNER_PACKAGES = ["vitest"];
 // Real, permanent tsconfig.json "paths" redirects to a project-owned ambient stub —
 // distinct from the temporary untyped-fixture injection below, which simulates the
@@ -50,6 +74,8 @@ const TEST_RUNNER_PACKAGES = ["vitest"];
 // simulation (that takes precedence — see assertTypeResolution).
 const PERMANENT_TYPE_STUBS = {
 	"@protontech/crypto": "src/platform/protontech-crypto.d.ts",
+	"@protontech/crypto/proxy/endpoint/api.ts": "src/platform/protontech-crypto.d.ts",
+	"@protontech/crypto/srp": "src/platform/protontech-crypto.d.ts",
 };
 const ALL_RESOLUTION_PACKAGES = [...DIRECT_RUNTIME_PACKAGES, ...TEST_RUNNER_PACKAGES];
 const COMMON_PROJECT_FILES = [
@@ -271,7 +297,9 @@ async function assertRuntimeBundleResolution(projectRoot) {
 				'import * as diff3 from "node-diff3";',
 				'import { VERSION as protonDriveSdkVersion } from "@protontech/drive-sdk";',
 				'import { CryptoProxy } from "@protontech/crypto";',
-				"globalThis.__airSyncRuntimeResolution = [fflate, ignore, md5, diff3, protonDriveSdkVersion, CryptoProxy];",
+				'import { Api as protonCryptoApi } from "@protontech/crypto/proxy/endpoint/api.ts";',
+				'import { generateKeySalt as protonCryptoGenerateKeySalt } from "@protontech/crypto/srp";',
+				"globalThis.__airSyncRuntimeResolution = [fflate, ignore, md5, diff3, protonDriveSdkVersion, CryptoProxy, protonCryptoApi, protonCryptoGenerateKeySalt];",
 			].join("\n"),
 			loader: "ts",
 			resolveDir: projectRoot,

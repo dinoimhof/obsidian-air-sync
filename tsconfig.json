@@ -19,6 +19,12 @@
 		"paths": {
 			"@protontech/crypto": [
 				"./src/platform/protontech-crypto.d.ts"
+			],
+			"@protontech/crypto/proxy/endpoint/api.ts": [
+				"./src/platform/protontech-crypto.d.ts"
+			],
+			"@protontech/crypto/srp": [
+				"./src/platform/protontech-crypto.d.ts"
 			]
 		}
 	},
