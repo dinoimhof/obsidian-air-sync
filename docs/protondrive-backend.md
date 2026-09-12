@@ -16,9 +16,11 @@ remote-vault resolution (Step 6, which pulled forward a minimal but real setting
 renderer and the Step 7 contract-harness registration — both turned out to be hard
 requirements once the backend was registered for real, not deferrable). **The backend
 is now selectable from Obsidian's settings UI and can connect, bind a folder, and
-sync.** Remaining: a fuller settings-UI pass (Step 8, if the current one proves too
-minimal in practice), the opt-in live E2E suite (Step 10), and the final hardening
-pass (Step 11).
+sync.** Step 10 (the opt-in live E2E suite, `e2e/protondrive.e2e.ts`) also landed —
+type-checked, but not yet run live (needs a real Proton Drive account and a
+non-sandboxed Electron environment; see its own section below). Remaining: a fuller
+settings-UI pass (Step 8, if the current one proves too minimal in practice) and the
+final hardening pass (Step 11) — see the manual checklist at the end of this document.
 
 ## Open risks and decisions
 
@@ -310,3 +312,171 @@ so the scanner never reaches the problematic code regardless of which test trigg
 it. Any future test that needs *real* Proton Drive SDK behavior is out of scope by
 design — verification against the real SDK happens only in the opt-in live E2E (Step
 10) and this backend's own manual spike testing, never in the unit suite.
+
+## Step 11 — Hardening pass (manual checklist)
+
+This is a **manual** checklist run against a real Obsidian install and your real Proton
+Drive account — nothing here can be automated the way the unit suite or the opt-in e2e
+(Step 10) can, because it is specifically testing what those can't: real process
+restarts, a real OS-level credential store, real background sync timing, and (if
+available) a real mobile device. Nothing here should be run against a vault you can't
+afford to lose — use a disposable test vault, or a real one you have a current backup
+of.
+
+**Never record secret values** (session uid, tokens, `keyPassword`, clientUid) in
+whatever record you keep of this run — only platform/version and pass/fail, exactly
+like the SecretStorage checklist in [docs/e2e-testing.md](e2e-testing.md). An unrun
+step is `unverified`, not a pass — do not mark something done because it's "probably
+fine" from reading the code.
+
+### 0. Build and install
+
+1. `npm run build` (the full gate — lint, `lint:bot-repro`, build, `test:coverage` —
+   should already be green from CI/the last commit; re-run it here if anything in the
+   working tree has changed since).
+2. Copy `main.js`, `manifest.json`, `styles.css` into the test vault's
+   `.obsidian/plugins/air-sync/` and enable the plugin.
+3. Record: OS, Obsidian version, plugin version.
+
+### 1. Connect and bind a folder
+
+1. Open plugin settings, select **Proton Drive** as the backend.
+2. Click **Connect to Proton Drive** — confirm the system browser opens Proton's own
+   `account.proton.me` sign-in page (never a plugin-drawn password field).
+3. Sign in. Confirm the settings tab shows **● Connected** without you pasting anything
+   back into Obsidian (session-fork has no code/token for you to copy).
+4. Confirm the **Full-drive access** disclosure text is visible and accurately describes
+   the trust footprint (full "My files" reachable, not an app-scoped folder) — this is
+   the concrete "strict security posture, made visible to the user" requirement from the
+   original implementation plan, not just an internal safeguard.
+5. Bind a folder two ways, on two separate runs of this step: once via the default
+   button (should create/reuse `obsidian-air-sync/<vault name>` at the Drive root — spot
+   check this exists via the Proton Drive web app), and once via **Choose folder**
+   (`ProtonDriveFolderPickerModal`): drill into an existing folder, and separately try
+   creating a new folder from inside the picker. Confirm the bound folder's name is
+   reflected back in settings after either path.
+
+### 2. Multi-restart login persistence soak
+
+The core promise of Step 2's auth work: the plugin must never re-prompt sign-in on an
+ordinary reload. This is the step most likely to silently regress if a future change
+touches `src/fs/protondrive/auth.ts` or `token-store.ts`.
+
+1. With the backend connected (from step 1), fully quit Obsidian (not just close the
+   window — actually terminate the process/app) and relaunch it.
+2. Confirm the backend still shows **● Connected** with no sign-in prompt, and that a
+   sync runs successfully without any user action.
+3. Repeat the full quit/relaunch **at least three times in a row**, running a real sync
+   each time. A single successful restart is not enough evidence — the session-fork
+   tokens and `keyPassword` are read from SecretStorage fresh on every `getOrCreateAuth()`
+   call, and a bug here tends to show up as "works once, then breaks."
+4. If your Proton account setup makes it observable without exposing token values
+   (e.g. you can tell from Proton's own account activity log), confirm that a session
+   refresh at some point during the soak rotates tokens correctly and the connection
+   survives the NEXT restart after that rotation too — mirroring the rotation check in
+   docs/e2e-testing.md's SecretStorage checklist, and exercising the one part of
+   `auth.ts` (`performRefresh`'s `UID` rotation) noted as a latent gap in
+   `provider.ts`'s `readBackendState` comment.
+5. Disconnect, then reconnect from scratch. Confirm a fresh session-fork sign-in is
+   requested (i.e. disconnect actually revoked the local session) and that the
+   previously-bound folder is either still bound or cleanly reset, matching what
+   `ProtonDriveProvider.disconnect()` promises (`DEFAULT_PROTON_DRIVE_DATA`, secrets
+   cleared except `clientUid`).
+
+### 3. Sync correctness smoke test
+
+Exercise the ordinary path once, end to end, on a small real vault:
+
+1. Create a handful of notes (including at least one nested folder, one non-Markdown
+   attachment, and one file with a non-ASCII name) and let a sync complete.
+2. Confirm all of them appear correctly in the Proton Drive web app, with matching
+   content and folder structure.
+3. Edit a file locally, let it sync, and confirm the edit lands on Proton Drive.
+4. Edit a file's content **on the Proton Drive web app** (not through Air Sync) and
+   confirm the change pulls down into the vault on the next sync.
+5. Rename a file and a folder locally; confirm both renames propagate remotely without
+   showing up as a delete+recreate (check the Proton Drive web app's own version/activity
+   view if it exposes one).
+6. Delete a file locally; confirm it's removed remotely. Delete a file on the Proton
+   Drive web app; confirm it's removed locally on the next sync.
+
+### 4. Crash-safety scenarios
+
+ADR 0001's crash-safety invariants (commit only after a clean cycle) are already proven
+at the unit level by `tests/fs/protondrive/caching-remote-fs.contract-harness.ts` — this
+step is about the parts only a REAL crash can exercise: real disk I/O timing, a real
+IndexedDB, and a real OS process kill.
+
+1. Start a sync involving several files (so it takes a few seconds), and **force-quit
+   Obsidian mid-sync** (kill the process, don't use the normal quit).
+2. Relaunch. Confirm the plugin recovers cleanly: no duplicate files, no stuck "syncing"
+   state, and a normal sync cycle completes on its own without manual intervention
+   (Rescan, disconnect/reconnect, etc.).
+3. Repeat, but force-quit during specifically a multi-file **upload** batch and, on a
+   separate run, during a **download** batch, to exercise both directions.
+4. With the plugin already mid-idle, disconnect your machine's network entirely, trigger
+   a manual sync, and confirm it fails gracefully (a visible error/notice, not a hang or
+   crash) and recovers on the next attempt once connectivity returns.
+
+### 5. Incremental sync fidelity
+
+1. After an initial full sync, make a small remote-only change (add one file via the
+   Proton Drive web app) and confirm the next sync picks it up via the event stream
+   (`iterateEvents`), not a full rescan — if you have logging enabled
+   (`enableLogging`/`logLevel: debug`), the log should show an incremental event
+   application, not "Full scan completed."
+2. Leave the vault connected but idle for longer than you'd normally leave Obsidian
+   open (e.g. overnight), then make a remote change and confirm the next sync still
+   picks it up correctly — this exercises the `iterateEvents` cursor staying valid
+   across a real gap, not just the wall-clock-independent unit test.
+3. If practical, make a change to some OTHER content in the same Proton Drive account
+   outside the bound `obsidian-air-sync/<vault>` folder, and confirm it does *not*
+   trigger spurious sync activity — this is the "event scope is shared by the whole
+   Drive tree, unrelated events silently no-op" behavior documented above; confirm it
+   actually holds live, not just in the unit contract.
+
+### 6. Settings UI walkthrough (desktop)
+
+Beyond what steps 1–2 already exercise:
+
+1. With a folder already bound, confirm the settings tab shows the bound folder's
+   current name (not just its raw id) via `getRemoteVaultDisplayPath`.
+2. Switch the active backend away from Proton Drive to a different one, then switch
+   back. Confirm re-selecting Proton Drive does **not** require a fresh sign-in (the
+   session secrets and `clientUid` are backend-switch-durable by design — see the
+   "clientUid" section above) and that the previously-bound folder is remembered or
+   cleanly reset per whatever `settings.backendData` clearing actually does on a
+   backend switch — this is the concrete behavior the `clientUid` persistence design
+   decision was made to support; confirm it wasn't only true in theory.
+3. Confirm `Rescan`/full-resync (if exposed by the plugin's UI) works against Proton
+   Drive without error.
+
+### 7. Mobile (best-effort — mark `unverified` if unavailable)
+
+Mobile execution of `@protontech/crypto`'s WASM/worker code was flagged as an **open,
+unverified risk** as far back as Step 0 (see "Mobile WASM/worker bundling" above) — this
+is the first point in the whole implementation where it can actually be checked against
+a real device instead of reasoned about.
+
+1. Install the built plugin on a real mobile Obsidian install (iOS and/or Android — note
+   which).
+2. Attempt to connect: confirm the session-fork sign-in flow works on mobile (opens the
+   system browser or an in-app browser tab; the desktop code path already branches on
+   `Platform.isMobile` for this).
+3. Attempt a real sync. The specific failure mode to watch for is a crash or hang during
+   crypto operations (key decryption, content encryption/decryption) — if the SDK's
+   WASM/worker requirements aren't met by the mobile WebView, this is where it will
+   surface, not earlier.
+4. If mobile fails outright, that is a real, reportable finding for this backend's
+   "known risks" — record exactly what happened (error message, at what step) rather
+   than silently marking the backend desktop-only after the fact.
+
+### 8. Final sign-off
+
+1. Re-run the full gate one more time on a clean tree: `npm run lint && npm run
+   lint:bot-repro && npm run build && npm run test:coverage`.
+2. If you were able to run it, `npm run test:e2e:protondrive` from a plain (non-sandboxed)
+   shell with real credentials in `.env.e2e` (see docs/e2e-testing.md).
+3. Update the Status section at the top of this document to reflect what was actually
+   verified live versus still `unverified`, and file/fix anything this checklist turned
+   up before considering the backend feature-complete.
