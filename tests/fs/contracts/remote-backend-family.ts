@@ -2,6 +2,7 @@ import type { IFileSystem } from "../../../src/fs/interface";
 import { DropboxFs } from "../../../src/fs/dropbox";
 import { GoogleDriveFs } from "../../../src/fs/googledrive";
 import { OneDriveFs } from "../../../src/fs/onedrive";
+import { ProtonDriveFs } from "../../../src/fs/protondrive";
 
 /**
  * Test-only catalog joining production filesystem implementations to the remote
@@ -12,6 +13,7 @@ export const REMOTE_BACKEND_FAMILIES = {
 	googledrive: GoogleDriveFs,
 	dropbox: DropboxFs,
 	onedrive: OneDriveFs,
+	protondrive: ProtonDriveFs,
 } as const;
 
 export type RemoteBackendFamily = keyof typeof REMOTE_BACKEND_FAMILIES;

@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeAll, vi } from "vitest";
-import { initRegistry, getAllBackendProviders } from "./registry";
 import type { ISecretStore } from "./secret-store";
 import type { AirSyncSettings } from "../settings";
 import type { App } from "obsidian";
@@ -8,12 +7,27 @@ import { GoogleDriveFs } from "./googledrive";
 
 vi.mock("obsidian");
 
+// Proton Drive's provider module graph reaches `@protontech/drive-sdk`/
+// `@protontech/crypto` (real, unmocked) via `fs/protondrive/client.ts` and
+// `fs/protondrive/drive-client.ts` — those packages ship raw TS gated behind a
+// "browser" export condition and execute browser-only code (WebCrypto/openpgp) at
+// import time, which crashes under vitest's plain Node test environment (see
+// docs/protondrive-backend.md). This test only needs the real `ProtonDriveFs`
+// CLASS to construct on SOME client object (to check its checkpoint/family
+// pairing), never the real SDK, so stub the two modules that pull it in.
+vi.mock("./protondrive/client", () => ({ createProtonDriveClient: () => "fake-handle" }));
+vi.mock("./protondrive/drive-client", () => ({ ProtonDriveClient: class {} }));
+
 // A secret store that satisfies any backend's token lookup, so each provider's
 // createFs() can build its FS for the pairing check below (createFs returns null
-// without a refresh token).
+// without a refresh token). `keyPassword` is Proton Drive-specific (see
+// `ProtonDriveAuthProvider.isAuthenticated`).
 const connectedSecretStore: ISecretStore = {
 	getSecret: (id: string) =>
-		id.includes("refresh") ? "RT" : id.includes("access") ? "AT" : null,
+		id.includes("refresh") ? "RT"
+			: id.includes("access") ? "AT"
+				: id.includes("keyPassword") ? "KP"
+					: null,
 	setSecret: () => {},
 };
 
@@ -35,8 +49,12 @@ function connectedSettings(): AirSyncSettings {
 const mockApp = {} as App;
 
 describe("backend registry ↔ checkpoint-store pairing", () => {
-	beforeAll(() => {
-		initRegistry(connectedSecretStore);
+	let getAllBackendProviders: typeof import("./registry").getAllBackendProviders;
+
+	beforeAll(async () => {
+		const registry = await import("./registry");
+		getAllBackendProviders = registry.getAllBackendProviders;
+		registry.initRegistry(connectedSecretStore);
 	});
 
 	// The FS-side incremental checkpoint (`fs.checkpoint`) and the provider-side
@@ -54,6 +72,7 @@ describe("backend registry ↔ checkpoint-store pairing", () => {
 				"googledrive", "googledrive-custom",
 				"onedrive", "onedrive-custom",
 				"dropbox", "dropbox-custom",
+				"protondrive",
 			]),
 		);
 	});

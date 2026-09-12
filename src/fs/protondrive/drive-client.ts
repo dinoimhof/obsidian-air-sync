@@ -9,6 +9,7 @@ import {
 	protonDriveExistingNodeUid,
 	protonDriveGetAvailableName,
 	protonDriveGetNode,
+	protonDriveGetRootFolder,
 	protonDriveGetStartEventId,
 	protonDriveIterateEvents,
 	protonDriveIterateFolderChildren,
@@ -89,6 +90,11 @@ export class ProtonDriveClient {
 		return children.find((child) => child.name === name) ?? null;
 	}
 
+	/** The root of the account's "My files" section — the anchor for `resolveRemoteVault`/the folder browser. */
+	getRootFolder(): Promise<ProtonDriveNode> {
+		return protonDriveGetRootFolder(this.handle);
+	}
+
 	/**
 	 * Recursively enumerate every node under `rootUid`. The SDK has no flat
 	 * recursive-listing or full-delta call (unlike Graph's `/delta` or Google
@@ -136,7 +142,14 @@ export class ProtonDriveClient {
 			return await protonDriveCreateFolder(this.handle, parentUid, name);
 		} catch (err) {
 			const existingUid = protonDriveExistingNodeUid(err);
-			if (existingUid) return protonDriveGetNode(this.handle, existingUid);
+			if (existingUid) {
+				const existing = await protonDriveGetNode(this.handle, existingUid);
+				// The conflicting node could be a FILE with the same name — the SDK's
+				// conflict error doesn't say which. Silently returning it as "the folder"
+				// would corrupt find-or-create (e.g. resolveRemoteVault binding to a file).
+				if (!existing.isFolder) throw new Error(`Proton Drive: "${name}" already exists as a file, not a folder`);
+				return existing;
+			}
 			throw err;
 		}
 	}

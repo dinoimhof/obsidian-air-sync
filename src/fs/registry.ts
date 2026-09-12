@@ -6,6 +6,7 @@ import { DropboxProvider } from "./dropbox/provider";
 import { DropboxCustomProvider } from "./dropbox/provider-custom";
 import { OneDriveProvider } from "./onedrive/provider";
 import { OneDriveCustomProvider } from "./onedrive/provider-custom";
+import { ProtonDriveProvider } from "./protondrive/provider";
 
 /**
  * Registry of available backend providers.
@@ -23,6 +24,7 @@ export function initRegistry(secretStore: ISecretStore): void {
 		new GoogleDriveProvider(secretStore),
 		new OneDriveProvider(secretStore),
 		new DropboxProvider(secretStore),
+		new ProtonDriveProvider(secretStore),
 		new GoogleDriveCustomProvider(secretStore),
 		new OneDriveCustomProvider(secretStore),
 		new DropboxCustomProvider(secretStore),

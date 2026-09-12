@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { pdFile, pdFolder } from "./test-helpers";
 
 const protonDriveGetNode = vi.fn();
+const protonDriveGetRootFolder = vi.fn();
 const protonDriveIterateFolderChildren = vi.fn();
 const protonDriveCreateFolder = vi.fn();
 const protonDriveRenameNode = vi.fn();
@@ -18,6 +19,7 @@ const protonDriveExistingNodeUid = vi.fn();
 
 vi.mock("../../platform/protondrive", () => ({
 	protonDriveGetNode,
+	protonDriveGetRootFolder,
 	protonDriveIterateFolderChildren,
 	protonDriveCreateFolder,
 	protonDriveRenameNode,
@@ -176,6 +178,25 @@ describe("ProtonDriveClient.createFolder", () => {
 		const { ProtonDriveClient } = await import("./drive-client");
 		const client = new ProtonDriveClient({});
 		await expect(client.createFolder("root", "dir")).rejects.toThrow("network blip");
+	});
+
+	it("rejects a conflict that resolves to an existing FILE (not a folder)", async () => {
+		protonDriveCreateFolder.mockRejectedValue(new Error("conflict"));
+		protonDriveExistingNodeUid.mockReturnValue("f1");
+		protonDriveGetNode.mockResolvedValue(pdFile("f1", "dir", "root"));
+		const { ProtonDriveClient } = await import("./drive-client");
+		const client = new ProtonDriveClient({});
+		await expect(client.createFolder("root", "dir")).rejects.toThrow("already exists as a file");
+	});
+});
+
+describe("ProtonDriveClient.getRootFolder", () => {
+	it("delegates to the platform wrapper", async () => {
+		const root = pdFolder("root-uid", "", "");
+		protonDriveGetRootFolder.mockResolvedValue(root);
+		const { ProtonDriveClient } = await import("./drive-client");
+		const client = new ProtonDriveClient({});
+		expect(await client.getRootFolder()).toBe(root);
 	});
 });
 

@@ -2,6 +2,10 @@ import tseslint from 'typescript-eslint';
 import obsidianmd from "eslint-plugin-obsidianmd";
 import globals from "globals";
 import { defineConfig, globalIgnores } from "eslint/config";
+// Deep import: eslint-plugin-obsidianmd has no stable public export for this list,
+// but it's the only way to EXTEND (not replace) its brand recognition for
+// obsidianmd/ui/sentence-case — see the override below.
+import { DEFAULT_BRANDS } from "eslint-plugin-obsidianmd/dist/lib/rules/ui/brands.js";
 
 const configRoot = decodeURIComponent(new URL(".", import.meta.url).pathname);
 
@@ -208,6 +212,12 @@ export default defineConfig(
 				"error",
 				{ paths: [AXIOS_IMPORT], patterns: [NODE_API_IMPORTS] },
 			],
+			// Extends (not replaces) the recommended config's default brand list with
+			// "Proton Drive" — absent upstream, needed by the Proton Drive backend's UI
+			// strings (see src/ui/protondrive-folder-picker.ts and the Step 8 settings
+			// renderer). `enforceCamelCaseLower: true` matches the recommended preset's
+			// own option (flat-config rule options replace, not merge, across blocks).
+			"obsidianmd/ui/sentence-case": ["warn", { enforceCamelCaseLower: true, brands: [...DEFAULT_BRANDS, "Proton Drive"] }],
 		},
 	},
 	{

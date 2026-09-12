@@ -203,6 +203,14 @@ export async function protonDriveGetNode(handle: ProtonDriveClientHandle, nodeUi
 	return node;
 }
 
+/** The root of the account's "My files" section — the anchor for resolving/browsing the sync folder. */
+export async function protonDriveGetRootFolder(handle: ProtonDriveClientHandle): Promise<ProtonDriveNode> {
+	const raw = await callAsyncMethod(handle, "getMyFilesRootFolder", []);
+	const node = toProtonDriveNode(raw);
+	if (!node) throw new Error("Proton Drive: root folder has an unexpected shape");
+	return node;
+}
+
 /** Children of a folder, via `iterateFolderChildrenNodeUids` + `iterateNodes` (no direct "list children" call). */
 export async function* protonDriveIterateFolderChildren(
 	handle: ProtonDriveClientHandle,

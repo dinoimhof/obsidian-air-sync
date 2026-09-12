@@ -12,6 +12,10 @@ import { registerOneDriveIFileSystemContract } from "./onedrive/ifilesystem.cont
 import { registerOneDriveCachingContract } from "./onedrive/caching-remote-fs.contract-harness";
 import { registerOneDriveChangeDetectionContract } from "./onedrive/remote-change-detection.contract-harness";
 import { registerOneDrivePriorityObservationContract } from "./onedrive/priority-observation.contract-harness";
+import { registerProtonDriveIFileSystemContract } from "./protondrive/ifilesystem.contract-harness";
+import { registerProtonDriveCachingContract } from "./protondrive/caching-remote-fs.contract-harness";
+import { registerProtonDriveChangeDetectionContract } from "./protondrive/remote-change-detection.contract-harness";
+import { registerProtonDrivePriorityObservationContract } from "./protondrive/priority-observation.contract-harness";
 
 interface RequiredRemoteContractSet {
 	filesystem: () => void;
@@ -38,6 +42,12 @@ const remoteBackendContracts = {
 		caching: registerOneDriveCachingContract,
 		changeDetection: registerOneDriveChangeDetectionContract,
 		priorityObservation: registerOneDrivePriorityObservationContract,
+	},
+	protondrive: {
+		filesystem: registerProtonDriveIFileSystemContract,
+		caching: registerProtonDriveCachingContract,
+		changeDetection: registerProtonDriveChangeDetectionContract,
+		priorityObservation: registerProtonDrivePriorityObservationContract,
 	},
 } satisfies Record<RemoteBackendFamily, RequiredRemoteContractSet>;
 

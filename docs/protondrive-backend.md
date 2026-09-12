@@ -8,13 +8,17 @@ documentation as each step lands.
 
 ## Status
 
-Steps 0–4 landed: SDK dependencies + platform boundary (Step 1), session-fork auth
-(Step 2), the SDK client wrapper (Step 3), and the `IFileSystem` implementation itself
-— `ProtonDriveFs`, its metadata cache, and event-based incremental sync (Step 4, which
-folded in Step 5's scope since `CachingRemoteFs` requires the incremental-sync seam to
-compile at all). Not yet wired into the plugin: no `IBackendProvider`/registry entry,
-no settings UI, no `resolveRemoteVault` folder resolution (Steps 6–9). The backend is
-not selectable from the Obsidian UI yet.
+Steps 0–4 and 6 landed: SDK dependencies + platform boundary (Step 1), session-fork
+auth (Step 2), the SDK client wrapper (Step 3), the `IFileSystem` implementation
+itself (Step 4, which folded in Step 5's scope since `CachingRemoteFs` requires the
+incremental-sync seam to compile at all), and provider/registry wiring plus
+remote-vault resolution (Step 6, which pulled forward a minimal but real settings
+renderer and the Step 7 contract-harness registration — both turned out to be hard
+requirements once the backend was registered for real, not deferrable). **The backend
+is now selectable from Obsidian's settings UI and can connect, bind a folder, and
+sync.** Remaining: a fuller settings-UI pass (Step 8, if the current one proves too
+minimal in practice), the opt-in live E2E suite (Step 10), and the final hardening
+pass (Step 11).
 
 ## Open risks and decisions
 
@@ -241,7 +245,68 @@ secrets (session UID, access/refresh tokens, `keyPassword`) persist via
 persisted; they are re-derived in memory each session from the freshly-fetched
 encrypted key blob (`src/fs/protondrive/addresses.ts`).
 
-Still to be written once the remaining steps land: provider/registry wiring and the
-full-Drive trust-footprint disclosure (Step 6), the settings UI (Step 8), and the
-contract-harness test suite (Step 7) — see
-[dropbox-backend.md](dropbox-backend.md) for the target structure this will converge on.
+Still to be written once the remaining steps land: the opt-in live E2E suite (Step 10)
+and the final hardening pass (Step 11) — see [dropbox-backend.md](dropbox-backend.md)
+for the target structure this will converge on.
+
+### Provider, registry wiring, and remote-vault resolution (Step 6)
+
+`ProtonDriveProvider` (`src/fs/protondrive/provider.ts`) implements `IBackendProvider`
+directly — unlike OneDrive/Dropbox (which share `PkceAppFolderProvider`), Proton's
+session-fork auth and full-drive scope don't fit that generic PKCE/app-folder base, so
+it's modeled on `GoogleDriveProviderBase`'s shape instead (own `makeClient`, no shared
+base class). `resolveProtonDriveRemoteVault` (`remote-vault.ts`) mirrors
+`resolveGoogleDriveRemoteVault`'s two-level `obsidian-air-sync/<Vault Name>`
+find-or-create, except `ProtonDriveClient.createFolder` is already idempotent
+(find-or-create in one SDK-shaped call), so there's no separate "find, then create"
+step. A picked folder (via the in-app browser, `ui/protondrive-folder-picker.ts`) binds
+directly by uid (`ProtonDriveProvider.bindPickedFolder`) rather than through the
+OneDrive/Dropbox `pendingPickedFolderPath`-under-a-fixed-root convention — full-drive
+scope means there is no fixed root to resolve a name under.
+
+**`clientUid`** (a stable per-installation identifier the SDK's `config.clientUid`
+requires, unrelated to the session's own uid) is generated once via
+`crypto.randomUUID()` and persisted as a plugin secret (`getBackendSecret`/
+`setBackendSecret`, name `"clientUid"`) rather than in `settings.backendData` — the
+latter is cleared on every backend switch, while Proton correlates this id across the
+client's whole lifetime on this installation, not just one connected session. It is
+deliberately excluded from the secret names `clearPluginSecrets()` sweeps on
+disconnect, so it survives a disconnect/reconnect and a switch away to a different
+backend and back.
+
+**Settings UI** (`ui/protondrive-settings.ts`, `ui/protondrive-folder-picker.ts`): a
+connection-status row, an explicit disclosure that this backend has no per-app
+scoping (full-drive access, unlike OneDrive/Dropbox), and a remote-folder field that
+either binds the default `obsidian-air-sync/<Vault Name>` folder or opens an in-app
+folder browser. The browser drills down from "My files" one folder at a time (there is
+no arbitrary-depth tree view) since the SDK exposes no flat listing to browse against —
+matching `ProtonDriveClient.fullList`'s own per-folder-walk limitation (see above).
+
+### A vitest-only landmine: never let `@protontech/*` load for real in tests
+
+`@protontech/crypto` (and transitively `@protontech/drive-sdk`) ships raw, uncompiled
+TypeScript gated behind a "browser" package.json export condition, and executes
+browser-only code (WebCrypto/openpgp) at *import* time, not just when its functions are
+called. Under Vitest's plain-Node test environment this is fatal twice over: Node
+refuses to strip types for anything under `node_modules`, and even past that, the
+browser-only code itself throws (no `window`/WebCrypto in that environment).
+
+The dangerous part: Vite's dependency-optimizer performs its own static scan of the
+whole reachable import graph at worker startup — independent of any per-test
+`vi.mock()`, which only intercepts *runtime* module resolution, not that earlier static
+scan. Once `fs/protondrive/provider.ts` became reachable for real from `fs/registry.ts`
+(Step 6), merely having it on the graph crashed the *entire worker process*, silently
+failing unrelated tests in other backends' files that never touch Proton Drive at all —
+confirmed by bisection with a cleared `node_modules/.vite` cache each time. Per-file
+`vi.mock` of `fs/protondrive/client.ts`/`drive-client.ts` (already this backend's own
+convention, e.g. `addresses.test.ts` mocking `protondrive-crypto.ts`) fixes the test
+that declares it, but not the shared worker's poisoned dependency scan.
+
+The fix that actually holds: `vitest.config.ts`'s `resolve.alias` maps
+`@protontech/crypto`, its two subpaths, and `@protontech/drive-sdk` to trivial stub
+files under `src/__mocks__/` — the same mechanism already used for `obsidian` itself.
+Aliasing happens at resolution time, before esbuild or Node ever see the real package,
+so the scanner never reaches the problematic code regardless of which test triggered
+it. Any future test that needs *real* Proton Drive SDK behavior is out of scope by
+design — verification against the real SDK happens only in the opt-in live E2E (Step
+10) and this backend's own manual spike testing, never in the unit suite.
