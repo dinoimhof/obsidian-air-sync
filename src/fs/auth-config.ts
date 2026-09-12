@@ -54,3 +54,21 @@ export const ONEDRIVE_AUTH = {
 	clientId: "71cd9a2a-a701-4ec2-b7d0-2352e0e84e9f",
 	redirectUri: PLUGIN_REDIRECT_URI,
 } as const;
+
+/**
+ * Proton Drive has no third-party OAuth; auth is Proton's session-fork mechanism
+ * (see docs/protondrive-backend.md) — the plugin never collects a password. There is
+ * no client id/secret and no redirect URI here at all: `authClientId` is the literal
+ * value Proton's fork protocol itself expects from any third-party client (verified
+ * against the real API; not an Air Sync-specific identifier, so it must not be
+ * changed to e.g. the plugin name), and `appVersion` is the required
+ * `x-pm-appversion` disclosure header for third-party Drive clients. Kept as a plain
+ * constant like the other backends' identity config; not wired to the manifest
+ * version, so bump it by hand on a release that meaningfully changes this backend.
+ */
+export const PROTON_DRIVE_AUTH = {
+	apiBaseUrl: "https://drive-api.proton.me",
+	accountUrl: "https://account.proton.me",
+	authClientId: "external-drive",
+	appVersion: "external-drive-air_sync@0.1.47-beta",
+} as const;
