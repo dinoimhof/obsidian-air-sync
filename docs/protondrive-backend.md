@@ -97,14 +97,64 @@ entirely. Since this backend's auth model is exactly "open the browser, never to
 the password," `@protontech/crypto`'s SRP module is not needed for v1 — narrower
 dependency surface than the original plan assumed.
 
-### Mobile WASM/worker bundling (pending verification)
+### SDK round trip (verified against a real account)
 
-`@protontech/crypto` bundles OpenPGP.js with a WASM implementation and an asm.js
-fallback, and offloads work to Web Workers via `comlink`. This plugin's
-`esbuild.config.mjs` currently has no WASM loader and externals all `node:*` builtins
-(fine on desktop's Electron/Node renderer, a hard failure on mobile if ever reached).
-Whether this bundles and runs correctly in Obsidian's mobile WebView is being smoke
-tested before this backend is scoped as mobile-compatible.
+A second throwaway spike (`proton-sdk-spike/`, esbuild-bundled, kept outside this
+repo) took the session-fork login above further: it decrypted the account's real user
+and address private keys (`CryptoProxy.importPrivateKey` with the fork's
+`keyPassword`, then the address key's `Token`/`Signature` chain for the modern
+key-encryption shape — logic mirrored from the reference plugin's
+`src/proton/api/addresses.ts`), constructed a real `ProtonDriveClient`
+(`httpClient`/`entitiesCache`/`cryptoCache`/`account`/`openPGPCryptoModule`/
+`srpModule`/`config.clientUid`), fetched the real "My files" root folder, uploaded a
+small test file, downloaded it back, verified the bytes matched exactly, and trashed
+the test file. **All of this succeeded against a live Proton account.**
+
+Concrete build/runtime findings from getting there:
+
+- `@protontech/crypto`/`@protontech/openpgp` ship raw TypeScript/browser-targeted
+  source (their `package.json` `exports` map points `.` straight at `.ts` files, and
+  gates the real OpenPGP implementation behind a `"browser"` export condition). They
+  **cannot** be run as plain Node/CommonJS — they must go through a bundler.
+  esbuild (`--platform=browser`, this project's implicit default since
+  `esbuild.config.mjs` never sets `platform`) bundles the whole stack into one file
+  successfully, with no separate `.wasm` asset produced and no unresolved imports.
+- `@protontech/openpgp`'s fingerprint/hash code calls the `Uint8Array.prototype.toHex`
+  / `toBase64` (and `fromHex`/`fromBase64`) methods from a recent JS-engine proposal.
+  **Neither Node 22.23 nor Node 24.21's V8 build implements these yet** — every Node-based
+  test needed a small polyfill to proceed. This is very likely a Node-specific gap
+  rather than a real Obsidian-environment problem (Electron tracks Chromium's V8 far
+  more closely than Node does), but that is still an assumption pending direct
+  verification inside an actual Obsidian desktop build — tracked as the remaining
+  open item below.
+- `@protontech/drive-sdk` pins its own nested `@noble/hashes@^1.8.0`, independent of
+  `@protontech/crypto`'s `@noble/hashes@^2.x` — npm naturally installs **two** copies
+  side by side, and that is correct: each package's own subpath-import shape (e.g.
+  `@noble/hashes/legacy`, `@noble/hashes/utils`) only resolves against its own pinned
+  major version's export map. Do not force a single shared version via `overrides` —
+  it breaks `drive-sdk`'s own imports.
+- The SDK's `HTTPClient` transport interface (`fetchJson`/`fetchBlob`, returning a
+  standard web `Response`) is trivially satisfiable by an Obsidian `requestUrl()`
+  adapter, confirming every network call in this backend can go through `requestUrl()`
+  per this repo's lint-enforced convention — proven by both the reference plugin's
+  real code and this spike's own working transport.
+- Some pre-existing nodes on the test account produced non-fatal
+  `verificationError`/`WARNING` log lines ("Could not find signing key with key ID
+  ...") for content predating 2024 — the SDK logs and continues rather than treating
+  it as fatal. Only an explicit thrown error (e.g. the `IntegrityError` this spike hit
+  and fixed — caused by an incomplete `getPublicKeys` in the spike's own scaffolding,
+  not an SDK defect) should be treated as a real failure; legacy-signature warnings on
+  content this backend didn't itself write are expected account-history noise, not a
+  bug to chase.
+
+### Mobile WASM/worker bundling (open, partially de-risked)
+
+Bundling itself works (see above) and needs no special WASM loader in
+`esbuild.config.mjs`. What remains genuinely unverified is whether the bundle
+*executes* correctly inside Obsidian's actual mobile WebView (iOS WebKit vs. Android's
+Chromium-based WebView have different timelines for the `Uint8Array` hex/base64
+proposal and for WASM/Worker support) — this needs a real on-device smoke test before
+this backend is scoped as mobile-compatible, not just a desktop Electron test.
 
 ## Full backend documentation
 
