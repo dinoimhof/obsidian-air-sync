@@ -49,17 +49,52 @@ interoperating once the service switches. This backend will need a follow-up upd
 when that migration ships; there is no mitigation available before Proton publishes
 the new model's SDK support.
 
-### Auth callback shape (pending live verification)
+### Auth callback shape (resolved)
 
-`IAuthProvider.completeAuth(input: string, backendData)` and this plugin's single
-`obsidian://air-sync-auth` protocol handler (`main.ts`, `src/fs/oauth-callback-error.ts`)
-only ever see parsed query parameters — there is no URL-fragment handling anywhere in
-this pipeline. Proton's session-fork mechanism may return its fork selector via a
-callback URL's query string (fits the existing pipeline unmodified), or the client may
-instead generate the selector itself and poll `sessionForksStatus()` directly with no
-real inbound callback. Which shape actually applies is being verified against a live
-Proton account via the throwaway spike script (kept outside `src/`, see the
-implementation plan) before `src/fs/protondrive/auth.ts` is finalized.
+Proton's session-fork mechanism has **no callback URL at all** — confirmed by reading
+the actual (not summarized) source of a real, shipping reference plugin
+(`github.com/yunusey/obsidian-proton-integration`, `src/proton/api/{auth,auth-web,
+account-api}.ts`), and independently confirmed live against the real API
+(`https://drive-api.proton.me/auth/v4/sessions/forks` returns `{Code, Selector,
+UserCode}` for an unauthenticated request with just an `x-pm-appversion` header):
+
+1. `POST /auth/v4/sessions/forks` (unauthenticated) returns a `Selector` and a
+   `UserCode`.
+2. The client generates a random 256-bit AES key locally (`crypto.getRandomValues`,
+   never transmitted), and builds a sign-in URL of the form
+   `https://account.proton.me/desktop/login?app=drive&pv=3#payload=<urlencoded
+   "0:<UserCode>:<base64 key>:external-drive">` — the key lives only in the URL
+   **fragment**, consumed client-side by Proton's own login page's JS, never sent to
+   any server.
+3. The user opens that URL in a real browser and signs in on Proton's own origin — the
+   plugin never sees or collects a password.
+4. The client polls `GET /auth/v4/sessions/forks/<Selector>` every 5s (a 422 response
+   means "not ready yet"), up to a 10-minute timeout.
+5. Once ready, the response carries `{ Payload, UID, AccessToken, RefreshToken }`.
+   `Payload` is AES-256-GCM ciphertext, decrypted locally with the key from step 2
+   (`crypto.subtle.decrypt`, additional-data `"fork"`) to yield `{ keyPassword }`.
+
+This means `src/fs/protondrive/auth.ts` does **not** go through the existing
+`obsidian://air-sync-auth` protocol handler / `oauth-callback-error.ts` pipeline at
+all — no change needed there. `startAuth()` opens the sign-in URL and itself performs
+the bounded poll (Branch B from the implementation plan), returning tokens +
+`keyPassword` directly once the fork resolves. The `x-pm-appversion` header (format
+`external-drive-<name>@<semver>-<channel>`) is required on every request, matching
+Proton's documented operational guideline for third-party apps.
+
+A throwaway Node spike (`proton-auth-spike.mjs`, kept outside this repo, per Step 0b)
+reimplements this exact flow using only native `fetch`/`crypto.subtle` — no SDK
+dependency needed to prove the handshake itself. Its `sessionForksInit` call was
+verified live against the real API; the full sign-in → poll → decrypt → authenticated
+Drive-API round trip is pending manual verification against a real account.
+
+### SRP is not needed for v1
+
+The reference plugin's `Srp` class (wrapping `@protontech/crypto/srp`) backs a
+*direct* username/password login path, which the session-fork flow above bypasses
+entirely. Since this backend's auth model is exactly "open the browser, never touch
+the password," `@protontech/crypto`'s SRP module is not needed for v1 — narrower
+dependency surface than the original plan assumed.
 
 ### Mobile WASM/worker bundling (pending verification)
 
