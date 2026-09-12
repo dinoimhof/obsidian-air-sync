@@ -84,9 +84,10 @@ Proton's documented operational guideline for third-party apps.
 
 A throwaway Node spike (`proton-auth-spike.mjs`, kept outside this repo, per Step 0b)
 reimplements this exact flow using only native `fetch`/`crypto.subtle` — no SDK
-dependency needed to prove the handshake itself. Its `sessionForksInit` call was
-verified live against the real API; the full sign-in → poll → decrypt → authenticated
-Drive-API round trip is pending manual verification against a real account.
+dependency needed to prove the handshake itself. **Verified end to end against a real
+Proton account**: `sessionForksInit` → browser sign-in → polled `sessionForksStatus` →
+AES-GCM payload decryption → an authenticated `GET /core/v4/addresses` call all
+succeeded (HTTP 200) with no SDK involved at all.
 
 ### SRP is not needed for v1
 
