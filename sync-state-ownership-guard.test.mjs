@@ -39,12 +39,12 @@ const METADATA_STORE = {
 	imports: [
 		"src/fs/caching/remote-fs.ts", "src/fs/dropbox/index.ts", "src/fs/dropbox/provider-base.ts",
 		"src/fs/googledrive/index.ts", "src/fs/googledrive/provider-base.ts", "src/fs/onedrive/index.ts",
-		"src/fs/onedrive/provider-base.ts", "src/fs/pkce-app-folder-provider.ts",
+		"src/fs/onedrive/provider-base.ts", "src/fs/pkce-app-folder-provider.ts", "src/fs/protondrive/index.ts",
 	],
 	references: [
 		"src/fs/caching/remote-fs.ts", "src/fs/dropbox/index.ts", "src/fs/dropbox/provider-base.ts",
 		"src/fs/googledrive/index.ts", "src/fs/googledrive/provider-base.ts", "src/fs/onedrive/index.ts",
-		"src/fs/onedrive/provider-base.ts", "src/fs/pkce-app-folder-provider.ts",
+		"src/fs/onedrive/provider-base.ts", "src/fs/pkce-app-folder-provider.ts", "src/fs/protondrive/index.ts",
 	],
 	constructors: ["src/fs/googledrive/provider-base.ts", "src/fs/pkce-app-folder-provider.ts"],
 };

@@ -8,8 +8,13 @@ documentation as each step lands.
 
 ## Status
 
-Not yet implemented. This file currently records the pre-implementation spike
-decisions; sections below get filled in as each step of the implementation lands.
+Steps 0–4 landed: SDK dependencies + platform boundary (Step 1), session-fork auth
+(Step 2), the SDK client wrapper (Step 3), and the `IFileSystem` implementation itself
+— `ProtonDriveFs`, its metadata cache, and event-based incremental sync (Step 4, which
+folded in Step 5's scope since `CachingRemoteFs` requires the incremental-sync seam to
+compile at all). Not yet wired into the plugin: no `IBackendProvider`/registry entry,
+no settings UI, no `resolveRemoteVault` folder resolution (Steps 6–9). The backend is
+not selectable from the Obsidian UI yet.
 
 ## Open risks and decisions
 
@@ -158,6 +163,85 @@ this backend is scoped as mobile-compatible, not just a desktop Electron test.
 
 ## Full backend documentation
 
-To be written once the implementation lands (addressing model, auth model, secret
-storage, checksum algorithm, incremental sync mechanism) — see
-[dropbox-backend.md](dropbox-backend.md) for the target structure.
+### Addressing model and metadata cache
+
+Proton Drive addresses content by an opaque, per-node `uid` in a strict single-parent
+tree (`NodeEntity.parentUid`) — structurally identical to OneDrive's
+`id`/`parentReference.id`, not Google Drive's multi-parent model. `ProtonDriveFs`
+(`src/fs/protondrive/index.ts`) extends `CachingRemoteFs<ProtonDriveNode>` and
+`ProtonDriveMetadataCache` extends `AbstractMetadataCache` exactly like the other
+id-addressed backends; `platform/protondrive.ts` projects the SDK's `NodeEntity` into
+the first-party `ProtonDriveNode` shape so no other file needs its own unknown-narrowing
+of `@protontech/drive-sdk`'s node types.
+
+An undecryptable node name (the SDK's `Result<string, Error | InvalidNameError>` coming
+back `ok: false`) is surfaced as a stable, uid-derived placeholder rather than dropped —
+silently hiding it would read downstream as a deletion (see this repo's "never derive a
+deletion from listing-absence alone" convention).
+
+### Checksum: "opaque" via the active revision uid
+
+Content is end-to-end encrypted; there is no locally-reproducible plaintext hash the SDK
+exposes (the closest analog, `Revision.claimedDigests.sha1`, is attacker-controlled
+cleartext metadata, "claimed" only, never server-verified — unsafe to use for identity).
+Instead, `remoteChecksum` uses `{ algo: "opaque", value: <active revision uid> }`: the
+SDK mints a fresh revision (and thus a fresh uid) on every content change, so it serves
+the same "did this change" role as Dropbox's/OneDrive's checksums without claiming to be
+a reproducible content hash — matching this type's existing `"opaque"` contract (added
+for pCloud).
+
+### No native flat listing or path lookup
+
+Unlike Graph's `/delta` or Google Drive's `files.list`, the SDK exposes only
+per-folder child iteration (`iterateFolderChildrenNodeUids` + `iterateNodes`) and no
+path-relative addressing at all. `ProtonDriveClient.fullList()`
+(`src/fs/protondrive/drive-client.ts`) therefore walks the tree one folder at a time to
+build a full listing, and path segment lookups (`getChildByName`) list a folder's
+children and match by name client-side. This is a known scaling limitation for very
+large vaults — each folder in the tree costs its own round trip — that a future
+optimization could address if it becomes a real-world bottleneck, but is not worth
+front-loading before it is observed to matter.
+
+### Incremental sync: `iterateEvents`, not a paginated delta
+
+The SDK's event stream (`iterateEvents(treeEventScopeId, lastEventId)`) is coarser than
+Graph's/Google Drive's delta: each event carries only a node uid and a change kind
+(`node_created`/`node_updated`/`node_deleted`), never the changed metadata itself — an
+upsert event re-fetches the node with `getNode` (`src/fs/protondrive/incremental-sync.ts`).
+The cursor is a `(treeEventScopeId, eventId)` pair, encoded as a small JSON string (the
+only shape `CachingRemoteFs`'s single opaque-string cursor slot expects). A
+`tree_refresh`/`tree_remove` event — the SDK's own server-initiated resync signal —
+requests a full scan, exactly like Google Drive's/OneDrive's HTTP 410 handling.
+
+The event *scope* is shared by the whole tree the configured sync root lives in (per the
+SDK's own doc: "the scope can comprise one or more folder trees"), so the stream can
+include nodes outside the configured `AirSync/<vault>` root when other content shares the
+same Drive volume. Those events resolve to no path (their parent chain never reaches the
+configured root) and are silently no-ops — the same mechanism that already ignores
+irrelevant Google Drive changes — but it does mean a very active account could burn
+through the per-cycle event cap on unrelated activity; documented here as a known,
+currently unoptimized cost rather than silently degraded correctness.
+
+### Non-atomic rename+reparent
+
+The SDK exposes `renameNode` and `moveNodes` as two separate calls with no combined
+rename-and-move endpoint (unlike Graph's single PATCH). `ProtonDriveClient.move()` issues
+them sequentially; a failure between the two leaves the node moved-but-not-renamed (or
+vice versa) rather than atomically neither. This mirrors the same two-call shape as the
+SDK itself, is retried by the ordinary sync-cycle failure handling like any other
+mid-operation exception, and does not corrupt cache state (the final `getNode` re-fetch
+after both calls reflects whatever the server actually ended up with).
+
+### Secret storage, auth model
+
+See [the auth section above](#auth-callback-shape-resolved) for the session-fork model;
+secrets (session UID, access/refresh tokens, `keyPassword`) persist via
+`publishBackendSecret`/`getBackendSecret` (`src/fs/token-store.ts`), never
+`data.json` — see `src/fs/protondrive/auth.ts`. Decrypted private keys are never
+persisted; they are re-derived in memory each session from the freshly-fetched
+encrypted key blob (`src/fs/protondrive/addresses.ts`).
+
+Still to be written once the remaining steps land: provider/registry wiring and the
+full-Drive trust-footprint disclosure (Step 6), the settings UI (Step 8), and the
+contract-harness test suite (Step 7) — see
+[dropbox-backend.md](dropbox-backend.md) for the target structure this will converge on.
