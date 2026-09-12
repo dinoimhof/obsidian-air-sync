@@ -38,6 +38,7 @@ cp .env.e2e.example .env.e2e          # gitignored; fill the Google + OneDrive c
 npm run e2e:bootstrap -- google       # authorize in the browser → token auto-written to .env.e2e
 npm run e2e:bootstrap -- dropbox      # authorize in the browser → token auto-written to .env.e2e
 npm run e2e:bootstrap -- onedrive     # authorize in the browser → token auto-written to .env.e2e
+npm run e2e:bootstrap -- protondrive  # sign in in the browser → session auto-written to .env.e2e
 npm run test:e2e                      # type-checks E2E wiring, then runs the live contracts
 ```
 
@@ -48,8 +49,8 @@ is credential-gated; it is not live semantic evidence and must be reported as bl
 ## Prerequisites
 
 - Node 20 or 22 (the e2e transport uses the global `fetch`).
-- A **test** Google, Dropbox, and/or (personal) Microsoft account. Each backend is
-  independent: provide one token to test just that backend; the others warn and skip.
+- A **test** Google, Dropbox, (personal) Microsoft, and/or Proton account. Each backend
+  is independent: provide credentials to test just that backend; the others warn and skip.
 
 ## One-time OAuth-app setup (loopback)
 
@@ -74,6 +75,9 @@ redirect URI once:
   desktop"); put its application (client) id in `.env.e2e` (`AIRSYNC_E2E_ONEDRIVE_CLIENT_ID`).
   PKCE means no secret. The OneDrive e2e refreshes with this same client (the refresh token is
   bound to it), so — unlike Dropbox — the client id is required even when a token is present.
+- **Proton Drive** — nothing to register. Session-fork sign-in has no redirect URI at all: the
+  bootstrap opens Proton's own `account.proton.me` sign-in page directly and polls for you to
+  finish there, exactly like the production plugin's own connect flow does.
 
 ## Obtaining refresh tokens
 
@@ -87,6 +91,19 @@ redirect URI once:
 
 Tokens are long-lived; redo the bootstrap only if one is revoked.
 
+`npm run e2e:bootstrap -- protondrive` is structurally different — no loopback, no redirect —
+because session-fork itself is just "open a URL, then poll a status endpoint" (the same shape
+`ProtonDriveAuthProvider.startAuth()` uses in the real plugin):
+
+1. Prints Proton's sign-in URL and opens it.
+2. You sign in there (password never touches this bootstrap or the plugin).
+3. The bootstrap polls until the fork resolves, decrypts the session payload locally, and writes
+   `uid`, `refreshToken`, `accessToken`, and `keyPassword` into `.env.e2e` — all four are
+   load-bearing (see docs/protondrive-backend.md), not just a refresh token.
+
+Redo this bootstrap if the session is revoked (e.g. you signed out everywhere in Proton's
+security settings) or `keyPassword` stops decrypting (an account password change rotates it).
+
 ## Environment variables
 
 Read from the real environment or a gitignored `.env.e2e` at the repo root (real env wins):
@@ -99,7 +116,11 @@ Read from the real environment or a gitignored `.env.e2e` at the repo root (real
 | `AIRSYNC_E2E_DROPBOX_REFRESH_TOKEN` | Dropbox — minted by the bootstrap |
 | `AIRSYNC_E2E_ONEDRIVE_CLIENT_ID` | OneDrive — your Entra app client id (for loopback + refresh) |
 | `AIRSYNC_E2E_ONEDRIVE_REFRESH_TOKEN` | OneDrive — minted by the bootstrap |
-| `AIRSYNC_E2E_OAUTH_PORT` | Optional loopback port (default 53682) |
+| `AIRSYNC_E2E_PROTONDRIVE_UID` | Proton Drive — session uid, minted by the bootstrap |
+| `AIRSYNC_E2E_PROTONDRIVE_REFRESH_TOKEN` | Proton Drive — minted by the bootstrap |
+| `AIRSYNC_E2E_PROTONDRIVE_ACCESS_TOKEN` | Proton Drive — minted by the bootstrap (self-refreshes on a 401) |
+| `AIRSYNC_E2E_PROTONDRIVE_KEY_PASSWORD` | Proton Drive — unlocks the account's private keys, minted by the bootstrap |
+| `AIRSYNC_E2E_OAUTH_PORT` | Optional loopback port (default 53682) — unused by Proton Drive |
 | `AIRSYNC_E2E_EXTRA_CA` | Optional PEM bundle of extra trust anchors for the Electron `net` host (see [Running behind a TLS-intercepting proxy](#running-behind-a-tls-intercepting-proxy)) |
 
 ## Running
@@ -107,10 +128,11 @@ Read from the real environment or a gitignored `.env.e2e` at the repo root (real
 It is **never** part of `npm test`, the lint gate, or CI — run it explicitly, when needed:
 
 ```bash
-npm run test:e2e           # all backends — the per-backend files run IN PARALLEL
-npm run test:e2e:google    # Google Drive only
-npm run test:e2e:dropbox   # Dropbox only
-npm run test:e2e:onedrive  # OneDrive only
+npm run test:e2e             # all backends — the per-backend files run IN PARALLEL
+npm run test:e2e:google      # Google Drive only
+npm run test:e2e:dropbox     # Dropbox only
+npm run test:e2e:onedrive    # OneDrive only
+npm run test:e2e:protondrive # Proton Drive only
 ```
 
 - `npm run test:e2e` runs the per-backend files **concurrently** (different services =
@@ -122,8 +144,8 @@ npm run test:e2e:onedrive  # OneDrive only
 - The four Priority fidelity scenarios run against each live API in separate fresh child
   folders. They validate real provider identity/version/path semantics without importing the
   fake-backed unit composition root.
-- **One token missing** → that backend warns and skips; every credentialed backend still runs.
-- **No tokens** → all three backends warn and skip; exit 0.
+- **One credential missing** → that backend warns and skips; every credentialed backend still runs.
+- **No credentials at all** → every backend warns and skips; exit 0.
 
 ### Run it OUTSIDE an agent/CLI sandbox
 

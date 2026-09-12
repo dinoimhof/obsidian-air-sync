@@ -1,6 +1,7 @@
 import type { GoogleDriveClient } from "../../src/fs/googledrive/client";
 import type { DropboxClient } from "../../src/fs/dropbox/client";
 import type { OneDriveClient } from "../../src/fs/onedrive/client";
+import type { ProtonDriveClient } from "../../src/fs/protondrive/drive-client";
 
 /**
  * Per-test isolation for the real-cloud contract run.
@@ -108,4 +109,35 @@ export async function cleanupOneDriveParent(
 	parentId: string,
 ): Promise<void> {
 	await client.deleteItem(parentId);
+}
+
+// ── Proton Drive ────────────────────────────────────────────────────────────
+//
+// No app-folder scoping: the whole account's "My files" is reachable, so the
+// per-run parent is created directly under the real Drive root (like Google
+// Drive), not a fixed app-root item (unlike OneDrive/Dropbox). Nodes are
+// addressed by opaque uid; a freshly-created folder's uid is usable at once.
+
+/** Create the per-run parent under "My files"; returns its uid. */
+export async function makeProtonDriveParent(client: ProtonDriveClient): Promise<string> {
+	const root = await client.getRootFolder();
+	const folder = await client.createFolder(root.uid, uniqueName("airsync-e2e"));
+	return folder.uid;
+}
+
+/** Create a fresh empty child folder under the parent; returns its uid (per-test root). */
+export async function makeProtonDriveChild(
+	client: ProtonDriveClient,
+	parentUid: string,
+): Promise<string> {
+	const folder = await client.createFolder(parentUid, uniqueName("t"));
+	return folder.uid;
+}
+
+/** Trash the parent and its whole subtree (idempotent: deleteItem no-ops when already gone). */
+export async function cleanupProtonDriveParent(
+	client: ProtonDriveClient,
+	parentUid: string,
+): Promise<void> {
+	await client.deleteItem(parentUid);
 }

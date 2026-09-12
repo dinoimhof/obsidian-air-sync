@@ -1,6 +1,6 @@
 # ADR 0003 — Fake fidelity is backstopped by opt-in live contracts and capability scenarios
 
-**Status:** Accepted · 2026-06-10 · amended 2026-06-11 (OneDrive extension → `mtimePrecisionMs`, point 8) · amended 2026-09-01 (live Priority fidelity, point 9)
+**Status:** Accepted · 2026-06-10 · amended 2026-06-11 (OneDrive extension → `mtimePrecisionMs`, point 8) · amended 2026-09-01 (live Priority fidelity, point 9) · amended 2026-09-13 (Proton Drive extension → multi-field session state, point 10)
 **Context area:** testing / `fs/` backends (multi-FS foundation)
 **Related:** [ADR 0002](0002-backends-verified-by-shared-behaviour-contracts.md) (the contracts this reuses; the fake-fidelity rule this automates), [docs/e2e-testing.md](../e2e-testing.md) (how to run it), [code-enforcement.md](../code-enforcement.md), [ARCHITECTURE.md](../../ARCHITECTURE.md) (principle 2)
 
@@ -103,6 +103,22 @@ is **opt-in**.
    owner of fail-closed outcomes such as incomplete evidence; the generic `CachingRemoteFs`
    integration test owns checkpoint non-interference.
 
+10. **Proton Drive is a sanctioned exception to point 4's "store only a refresh token."**
+    Session-fork carries no bearer-token-only shape at all: `uid` (required on every
+    authenticated call) and `keyPassword` (unlocks the account's private keys) are both
+    load-bearing per-session state alongside the refresh/access tokens — see
+    docs/protondrive-backend.md's auth section. The e2e (`e2e/protondrive.e2e.ts`) therefore
+    reads and restores all four fields (`AIRSYNC_E2E_PROTONDRIVE_UID/_REFRESH_TOKEN/
+    _ACCESS_TOKEN/_KEY_PASSWORD`) via `ProtonDriveAuth.restoreSession(...)`, not a single-token
+    `setTokens(...)` call. Its bootstrap also has no loopback step at all (point 4's
+    "localhost loopback server" doesn't apply): session-fork carries no redirect URI to
+    capture — signing in is itself "open a URL, then poll a status endpoint," which
+    `e2e/bootstrap.ts`'s `bootstrapProtonDrive()` reproduces directly against the same
+    production fork endpoints/crypto (`fork-auth.ts`) the real `ProtonDriveAuthProvider.
+    startAuth()` uses. Everything else — reusing `runIFileSystemContract` verbatim,
+    opt-in/never-CI, warn-and-skip on missing credentials, per-test isolated folders, and the
+    live Priority fidelity scenarios — is unchanged.
+
 ## Consequences
 
 - **The fake-fidelity rule of ADR 0002 now has an automated backstop**, run on demand instead
@@ -126,4 +142,7 @@ is **opt-in**.
   the right `computesHashOnStat`/`preservesWrittenMtime`/`mtimePrecisionMs`, and register the
   live capability scenarios it exposes. OneDrive (Microsoft
   Graph, App Folder scope) was the first such addition — and the first to surface a new knob
-  (`mtimePrecisionMs`) from a live failure, which is the backstop working as intended.
+  (`mtimePrecisionMs`) from a live failure, which is the backstop working as intended. Proton
+  Drive (session-fork auth, full-Drive scope) was the second, and the first whose auth model
+  didn't fit point 4's single-refresh-token assumption at all (point 10) — the block still
+  extends in one place, just with a wider credential shape.

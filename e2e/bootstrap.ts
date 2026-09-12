@@ -4,6 +4,15 @@ import { buildDropboxAuthorizeUrl, DropboxAuth } from "../src/fs/dropbox/auth";
 import { DROPBOX_AUTH } from "../src/fs/auth-config";
 import { buildOneDriveAuthorizeUrl, OneDriveAuth } from "../src/fs/onedrive/auth";
 import { buildOAuthState, computeS256Challenge, generateRandomString } from "../src/fs/oauth-pkce";
+import {
+	decryptForkKeyPassword,
+	FORK_INITIAL_DELAY_MS,
+	FORK_MAX_POLL_TIME_MS,
+	FORK_POLL_INTERVAL_MS,
+	generateForkSignInUrl,
+	sessionForksInit,
+	sessionForksStatus,
+} from "../src/fs/protondrive/fork-auth";
 import { loadDotEnvE2e } from "./helpers/env";
 import { announceAuthorizeUrl, loopbackPort, startLoopback, writeEnvE2e } from "./helpers/loopback";
 
@@ -108,14 +117,47 @@ async function bootstrapOnedrive(): Promise<void> {
 	}
 }
 
+/**
+ * Proton's session-fork login has no redirect URI at all — no OAuth app, no
+ * loopback capture. It is itself "open a URL, then poll a status endpoint,"
+ * reproduced here directly against the same production fork endpoints/crypto
+ * `ProtonDriveAuthProvider.startAuth()` runs (`src/fs/protondrive/auth.ts`),
+ * just without the `window.open`/`Notice` calls that assume a live plugin UI.
+ */
+async function bootstrapProtonDrive(): Promise<void> {
+	const init = await sessionForksInit();
+	const { encryptionKey, signInUrl } = generateForkSignInUrl(init.UserCode);
+	announceAuthorizeUrl("Proton Drive", signInUrl);
+
+	await new Promise((r) => setTimeout(r, FORK_INITIAL_DELAY_MS));
+	const startTime = Date.now();
+	let status: Awaited<ReturnType<typeof sessionForksStatus>>;
+	for (;;) {
+		if (Date.now() - startTime > FORK_MAX_POLL_TIME_MS) {
+			throw new Error("Proton Drive sign-in timed out — try again.");
+		}
+		status = await sessionForksStatus(init.Selector);
+		if (!("notReady" in status)) break;
+		await new Promise((r) => setTimeout(r, FORK_POLL_INTERVAL_MS));
+	}
+
+	const keyPassword = await decryptForkKeyPassword(encryptionKey, status.Payload);
+	writeEnvE2e("AIRSYNC_E2E_PROTONDRIVE_UID", status.UID);
+	writeEnvE2e("AIRSYNC_E2E_PROTONDRIVE_REFRESH_TOKEN", status.RefreshToken ?? "");
+	writeEnvE2e("AIRSYNC_E2E_PROTONDRIVE_ACCESS_TOKEN", status.AccessToken);
+	const path = writeEnvE2e("AIRSYNC_E2E_PROTONDRIVE_KEY_PASSWORD", keyPassword);
+	stdout.write(`\n✓ Proton Drive session written to ${path}\n`);
+}
+
 async function main(): Promise<void> {
 	loadDotEnvE2e(); // pick up AIRSYNC_E2E_*_CLIENT_ID/_SECRET from .env.e2e
 	const which = process.argv[2];
 	if (which === "google") await bootstrapGoogle();
 	else if (which === "dropbox") await bootstrapDropbox();
 	else if (which === "onedrive") await bootstrapOnedrive();
+	else if (which === "protondrive") await bootstrapProtonDrive();
 	else {
-		stdout.write("Usage: npm run e2e:bootstrap -- <google|dropbox|onedrive>\n");
+		stdout.write("Usage: npm run e2e:bootstrap -- <google|dropbox|onedrive|protondrive>\n");
 		process.exitCode = 1; // an unknown/typo'd subcommand must not look like success
 	}
 }
