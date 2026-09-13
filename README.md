@@ -11,6 +11,7 @@ Your notes stay in your own cloud storage:
 - Google Drive
 - OneDrive
 - Dropbox
+- Proton Drive
 
 No sync server to run. Almost nothing to configure. No need to think about uploads, downloads, or routine conflicts.
 
@@ -39,7 +40,7 @@ If Obsidian closes, your phone locks, or the connection drops during sync, compl
 ## Getting started
 
 1. Open **Settings → Air Sync**.
-2. Choose Google Drive, OneDrive, or Dropbox.
+2. Choose Google Drive, OneDrive, Dropbox, or Proton Drive.
 3. Click **Connect**.
 4. Choose the cloud folder used for your vault.
 
@@ -47,7 +48,7 @@ That's it.
 
 ### Your vault and your devices
 
-- **Keep your vault in local storage.** Create your Obsidian vault on your device — **not** inside a folder that another cloud drive already syncs (iCloud Drive, or the Dropbox / OneDrive / Google Drive desktop apps). Air Sync copies your notes to the cloud for you.
+- **Keep your vault in local storage.** Create your Obsidian vault on your device — **not** inside a folder that another cloud drive already syncs (iCloud Drive, or the Dropbox / OneDrive / Google Drive / Proton Drive desktop apps). Air Sync copies your notes to the cloud for you.
 - **Don't open the cloud folder as a vault.** The folder Air Sync creates in your cloud storage is a managed mirror — opening it directly in Obsidian as a vault is not supported. Keep working in your local vault; Air Sync keeps the cloud copy in step.
 - **Let Air Sync be the only sync tool for a vault.** Two sync mechanisms managing the same files at once is a common cause of conflicts.
 - **Use the same folder on every device.** During setup you choose which cloud folder to sync into — pick the **same folder** on each device so they share one set of notes.
@@ -95,10 +96,15 @@ Air Sync connects only to the cloud storage you choose, to sync your files:
 - **Google Drive** — `googleapis.com` for sync; sign-in happens on `accounts.google.com`, and a small auth server (`auth-airsync.takezo.dev`) performs the sign-in token exchange.
 - **OneDrive** — `graph.microsoft.com` for sync; sign-in happens on `login.microsoftonline.com` and returns directly to Obsidian (no relay or picker page — the folder is chosen in-app).
 - **Dropbox** — `api.dropboxapi.com` / `content.dropboxapi.com` for sync; sign-in happens on `dropbox.com` and returns directly to Obsidian (no relay or picker page — the folder is chosen in-app).
+- **Proton Drive** — `drive-api.proton.me` (and regional storage hosts for file content) for sync; sign-in happens on `account.proton.me` — Air Sync never sees your password. There is no redirect back to Obsidian: you complete sign-in in the browser tab, and the plugin picks it up automatically.
 
 Your vault data is sent only to your chosen storage provider — never to the auth, redirect, or picker pages.
 
 Air Sync only ever sees the folders it created — never the rest of your Google Drive, OneDrive, or Dropbox. (On OneDrive it uses the App Folder, so it can only access its own folder.)
+
+**Proton Drive is different: it has no per-app folder scoping.** Once connected, Air Sync can see and manage your *entire* Proton Drive, not just the folder it creates — Proton's API has no equivalent of Google/OneDrive's app-restricted access. Air Sync only ever reads or writes inside the folder you choose during setup, but nothing at the API level prevents it from reaching further; this is a property of Proton Drive's API, not a permission Air Sync requests and then ignores. Choose Proton Drive only if you're comfortable with that scope.
+
+Proton Drive support also bundles a GPL-3.0-licensed dependency (`@protontech/crypto`, required to talk to Proton Drive's end-to-end encryption). A build of this plugin with Proton Drive included is therefore a combined work under GPL-3.0 for that build/distribution, even though the rest of the plugin remains MIT — see [LICENSE](LICENSE) and [docs/protondrive-backend.md](docs/protondrive-backend.md) for details.
 
 ## Disclaimer
 

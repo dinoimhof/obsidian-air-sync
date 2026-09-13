@@ -14,13 +14,41 @@ itself (Step 4, which folded in Step 5's scope since `CachingRemoteFs` requires 
 incremental-sync seam to compile at all), and provider/registry wiring plus
 remote-vault resolution (Step 6, which pulled forward a minimal but real settings
 renderer and the Step 7 contract-harness registration — both turned out to be hard
-requirements once the backend was registered for real, not deferrable). **The backend
-is now selectable from Obsidian's settings UI and can connect, bind a folder, and
-sync.** Step 10 (the opt-in live E2E suite, `e2e/protondrive.e2e.ts`) also landed —
-type-checked, but not yet run live (needs a real Proton Drive account and a
-non-sandboxed Electron environment; see its own section below). Remaining: a fuller
-settings-UI pass (Step 8, if the current one proves too minimal in practice) and the
-final hardening pass (Step 11) — see the manual checklist at the end of this document.
+requirements once the backend was registered for real, not deferrable). Step 10 (the
+opt-in live E2E suite, `e2e/protondrive.e2e.ts`) also landed, type-checked but not yet
+run live.
+
+**Step 11's manual verification (see the checklist at the end of this document) is
+now underway against a real Proton Drive account, and has already found and fixed
+five real bugs no unit test caught** (unit test doubles don't enforce the constraints
+these tripped on):
+
+1. Two backend-switch/registry bugs only reachable by actually using the settings UI:
+   a failure in one backend's token sweep aborted switching to *every* backend, and a
+   failed switch left the tab showing a stale backend's connection section.
+2. Obsidian's real `SecretStorage.setSecret` rejects camelCase secret ids
+   (`"keyPassword"`, `"clientUid"`) — renamed to `"key-password"`/`"client-uid"`, and
+   `token-store.ts` now validates this eagerly so it can't regress for a future backend.
+3. Pre-sync-cycle failures (connect/auth/folder-pick) weren't reaching
+   `.airsync/logs/` at all, since `Logger.flush()` only ran at sync-cycle end or
+   plugin unload — fixed to flush immediately at those failure sites, for every backend.
+4. **The real live-account blocker**: `@noble/hashes`' feature-detection for the
+   `Uint8Array` hex/base64 proposal reported Obsidian's bundled Electron as having it
+   when `Uint8Array.prototype.toHex` was not actually callable — a partial,
+   inconsistent rollout that crashed the very first Drive SDK call naming a node
+   (folder browse/bind). Fixed with `src/platform/protondrive-polyfills.ts` (verifies
+   each method by calling it, not just checking its type). See "SDK round trip"
+   below for the full story — this was the one open risk flagged since Step 0 that
+   turned out to matter.
+5. Three error messages interpolated a real account email address or identifier
+   directly into text that reaches persisted logs — redacted to reference an opaque,
+   non-identifying id instead.
+
+**As of this writing, connecting and folder binding/browsing are confirmed working
+live against a real account.** The rest of the Step 11 checklist (multi-restart soak,
+crash-safety scenarios, mobile) has not yet been run. A fuller settings-UI pass
+(Step 8) remains optional, only if the current minimal one proves insufficient in
+practice.
 
 ## Open risks and decisions
 
@@ -284,12 +312,15 @@ scope means there is no fixed root to resolve a name under.
 **`clientUid`** (a stable per-installation identifier the SDK's `config.clientUid`
 requires, unrelated to the session's own uid) is generated once via
 `crypto.randomUUID()` and persisted as a plugin secret (`getBackendSecret`/
-`setBackendSecret`, name `"clientUid"`) rather than in `settings.backendData` — the
-latter is cleared on every backend switch, while Proton correlates this id across the
-client's whole lifetime on this installation, not just one connected session. It is
-deliberately excluded from the secret names `clearPluginSecrets()` sweeps on
-disconnect, so it survives a disconnect/reconnect and a switch away to a different
-backend and back.
+`setBackendSecret`, secret name `"client-uid"` — dash-separated: Obsidian's real
+`SecretStorage.setSecret` requires a lowercase-alphanumeric-with-dashes id and throws
+on a camelCase one like `"clientUid"`, caught only by a live connection attempt, not
+by any test double — see `token-store.ts`'s `secretKey()` guard) rather than in
+`settings.backendData` — the latter is cleared on every backend switch, while Proton
+correlates this id across the client's whole lifetime on this installation, not just
+one connected session. It is deliberately excluded from the secret names
+`clearPluginSecrets()` sweeps on disconnect, so it survives a disconnect/reconnect and
+a switch away to a different backend and back.
 
 **Settings UI** (`ui/protondrive-settings.ts`, `ui/protondrive-folder-picker.ts`): a
 connection-status row, an explicit disclosure that this backend has no per-app
