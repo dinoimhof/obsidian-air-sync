@@ -130,14 +130,24 @@ Concrete build/runtime findings from getting there:
   esbuild (`--platform=browser`, this project's implicit default since
   `esbuild.config.mjs` never sets `platform`) bundles the whole stack into one file
   successfully, with no separate `.wasm` asset produced and no unresolved imports.
-- `@protontech/openpgp`'s fingerprint/hash code calls the `Uint8Array.prototype.toHex`
-  / `toBase64` (and `fromHex`/`fromBase64`) methods from a recent JS-engine proposal.
-  **Neither Node 22.23 nor Node 24.21's V8 build implements these yet** — every Node-based
-  test needed a small polyfill to proceed. This is very likely a Node-specific gap
-  rather than a real Obsidian-environment problem (Electron tracks Chromium's V8 far
-  more closely than Node does), but that is still an assumption pending direct
-  verification inside an actual Obsidian desktop build — tracked as the remaining
-  open item below.
+- `@protontech/openpgp`'s fingerprint/hash code (via `@noble/hashes`) calls the
+  `Uint8Array.prototype.toHex`/`toBase64` (and `fromHex`/`fromBase64`) methods from a
+  recent JS-engine proposal. **Neither Node 22.23 nor Node 24.21's V8 build implements
+  these yet** — every Node-based test needed a small polyfill to proceed. The
+  assumption that real Obsidian desktop (Electron) would simply have these natively
+  turned out to be **wrong, and in a more insidious way than a clean absence**: live
+  testing against a real account found `@noble/hashes`' feature-detection
+  (`typeof Uint8Array.fromHex === "function" && typeof (new Uint8Array()).toHex ===
+  "function"`) reporting `true` while `.toHex()` was not actually callable — a
+  partial, inconsistent rollout of the proposal in that Electron/V8 build, crashing
+  with `"(intermediate value).toHex is not a function"` on the very first Drive SDK
+  call that names a node (folder listing/creation — i.e. immediately on trying to
+  browse or bind a folder). **Resolved**: `src/platform/protondrive-polyfills.ts`,
+  installed from `initProtonDriveCrypto()`, verifies each of the four methods by
+  actually *calling* it against a known input (not a `typeof` check) and only
+  (re)defines the ones that are missing or misbehave — see that file's own doc
+  comment for the full mechanism. Any other backend/environment where this SAME
+  partial-rollout pattern could recur is now covered by construction, not by luck.
 - `@protontech/drive-sdk` pins its own nested `@noble/hashes@^1.8.0`, independent of
   `@protontech/crypto`'s `@noble/hashes@^2.x` — npm naturally installs **two** copies
   side by side, and that is correct: each package's own subpath-import shape (e.g.
@@ -162,10 +172,15 @@ Concrete build/runtime findings from getting there:
 
 Bundling itself works (see above) and needs no special WASM loader in
 `esbuild.config.mjs`. What remains genuinely unverified is whether the bundle
-*executes* correctly inside Obsidian's actual mobile WebView (iOS WebKit vs. Android's
-Chromium-based WebView have different timelines for the `Uint8Array` hex/base64
-proposal and for WASM/Worker support) — this needs a real on-device smoke test before
-this backend is scoped as mobile-compatible, not just a desktop Electron test.
+*executes* correctly inside Obsidian's actual mobile WebView — WASM/Worker support
+specifically (iOS WebKit and Android's Chromium-based WebView have their own
+timelines for both). The `Uint8Array` hex/base64 proposal itself is no longer a
+separate mobile unknown: `protondrive-polyfills.ts` (see above) verifies and, where
+needed, replaces those methods regardless of platform, so a mobile WebView with the
+same partial-rollout gap desktop Electron had is already covered. A real on-device
+smoke test is still needed before this backend is scoped as mobile-compatible, not
+just a desktop Electron test — WASM/Worker availability is the part that test would
+actually be proving.
 
 ## Full backend documentation
 
