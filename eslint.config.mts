@@ -367,14 +367,18 @@ export default defineConfig(
 	{
 		// Re-pinned from 303 for the top-level Google Picker callback, then from 341 to
 		// isolate each provider's clearPluginSecrets() sweep in switchBackend() behind
-		// its own try/catch — one backend's sweep failing must not abort the switch for
+		// its own try/catch (one backend's sweep failing must not abort the switch for
 		// every OTHER backend too, since that loop runs unconditionally regardless of
-		// the switch target. The auth+folder operation itself lives in
-		// backend-auth-folder-pick.ts; this file retains only its connecting gate and
-		// lifecycle re-init because those must remain coordinated with every other
-		// bind/connect path owned here.
+		// the switch target), then from 348 for a shared logError() helper that flushes
+		// immediately — a pre-sync-cycle failure (connect/auth/folder-pick) otherwise sat
+		// only in the in-memory log buffer, since Logger.flush() only runs at sync-cycle
+		// end or plugin unload (itself un-awaited, per Obsidian's onunload(): void), so
+		// it could go missing from .airsync/logs/ even across a restart. The auth+folder
+		// operation itself lives in backend-auth-folder-pick.ts; this file retains only
+		// its connecting gate and lifecycle re-init because those must remain coordinated
+		// with every other bind/connect path owned here.
 		files: ["src/fs/backend-manager.ts"],
-		rules: { "max-lines": ["error", { max: 348, skipBlankLines: true, skipComments: true }] },
+		rules: { "max-lines": ["error", { max: 353, skipBlankLines: true, skipComments: true }] },
 	},
 	{
 		// Lint manifest.json for the words the Obsidian submission validator
