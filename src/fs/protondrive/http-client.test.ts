@@ -107,4 +107,31 @@ describe("ProtonDriveHttpClient.fetchBlob", () => {
 			}),
 		).rejects.toThrow("unsupported request body type");
 	});
+
+	it("encodes a FormData body as multipart/form-data with a matching boundary header, instead of throwing", async () => {
+		const { client, authenticatedRequest } = fakeApiClient();
+		const httpClient = new ProtonDriveHttpClient(client);
+		const formData = new FormData();
+		formData.set("Metadata", new Blob([JSON.stringify({ Name: "x" })], { type: "application/json" }), "Metadata");
+		formData.set("ContentBlock", new Blob([new Uint8Array([1, 2, 3])]), "ContentBlock");
+
+		await httpClient.fetchBlob({
+			url: "https://drive-api.proton.me/drive/v2/volumes/v/files/small",
+			method: "POST",
+			headers: fakeHeaders({}),
+			timeoutMs: 30000,
+			body: formData,
+		});
+
+		const call = authenticatedRequest.mock.calls[0]![1] as { body: ArrayBuffer; headers: Record<string, string> };
+		const boundaryMatch = /^multipart\/form-data; boundary=(\S+)$/.exec(call.headers["Content-Type"] ?? "");
+		expect(boundaryMatch).not.toBeNull();
+		const boundary = boundaryMatch![1];
+		const text = new TextDecoder().decode(call.body);
+		expect(text).toContain(`--${boundary}\r\n`);
+		expect(text).toContain('Content-Disposition: form-data; name="Metadata"; filename="Metadata"');
+		expect(text).toContain("Content-Type: application/json");
+		expect(text).toContain('Content-Disposition: form-data; name="ContentBlock"; filename="ContentBlock"');
+		expect(text).toContain(`--${boundary}--\r\n`);
+	});
 });

@@ -43,12 +43,25 @@ these tripped on):
 5. Three error messages interpolated a real account email address or identifier
    directly into text that reaches persisted logs — redacted to reference an opaque,
    non-identifying id instead.
+6. **Every upload failed**: `requestUrl()` has no concept of `FormData` (unlike
+   `fetch`/`XMLHttpRequest`, which serialize it and compute the multipart boundary
+   themselves), but the SDK's small-file/small-revision and per-block upload paths all
+   build a `FormData` body internally and hand it to the HTTP transport as-is —
+   `http-client.ts` threw `"unsupported request body type ... FormData"` on every
+   single push, live-confirmed via `.airsync/logs/`. Fixed by encoding `FormData` into
+   a raw multipart/form-data body (with a generated boundary set as the
+   `Content-Type` header) before handing it to `requestUrl()`. Downloads were
+   unaffected (`GET` never needs a `FormData` body), so this looked like isolated
+   symptoms — a pre-existing file never syncing, newly created files staying
+   local-only after a rescan — but both traced to this one cause: pushes had never
+   once succeeded.
 
 **As of this writing, connecting and folder binding/browsing are confirmed working
-live against a real account.** The rest of the Step 11 checklist (multi-restart soak,
-crash-safety scenarios, mobile) has not yet been run. A fuller settings-UI pass
-(Step 8) remains optional, only if the current minimal one proves insufficient in
-practice.
+live against a real account; push/pull sync (bug 6 above) is fixed and unit-tested
+but not yet re-verified live** — that is the next thing to confirm. The rest of the
+Step 11 checklist (multi-restart soak, crash-safety scenarios, mobile) has not yet
+been run. A fuller settings-UI pass (Step 8) remains optional, only if the current
+minimal one proves insufficient in practice.
 
 ## Open risks and decisions
 
