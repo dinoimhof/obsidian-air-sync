@@ -128,7 +128,14 @@ export interface ProtonDriveNode {
 	name: string;
 	isFolder: boolean;
 	isTrashed: boolean;
-	/** Encrypted size on the server (see `NodeEntity.activeRevision.storageSize`); 0 for folders. */
+	/**
+	 * The file's original (plaintext) byte length, from `NodeEntity.activeRevision.claimedSize`
+	 * (recorded from the `expectedSize` we upload with, see `protonDriveUploadFile`) — 0 for
+	 * folders. Never `activeRevision.storageSize`: that is the *encrypted* size as stored on
+	 * the server, which differs from the plaintext size by the encryption overhead on every
+	 * non-empty file, and comparing it against a local plaintext size always fails sync's
+	 * post-write terminal-size proof (see docs/protondrive-backend.md).
+	 */
 	size: number;
 	mtime: number;
 	/** The active revision's uid — a fresh value on every content change; used as the opaque checksum. */
@@ -164,7 +171,11 @@ function toProtonDriveNode(raw: unknown): ProtonDriveNode | null {
 	if (typeof activeRevision === "object" && activeRevision !== null) {
 		const revRec = activeRevision as Record<string, unknown>;
 		if (typeof revRec.uid === "string") revisionUid = revRec.uid;
-		if (typeof revRec.storageSize === "number") size = revRec.storageSize;
+		// claimedSize is the plaintext size the uploader claimed (see protonDriveUploadFile's
+		// `expectedSize`); storageSize is ciphertext size and only a fallback for a revision
+		// some other client uploaded without extended attributes.
+		if (typeof revRec.claimedSize === "number") size = revRec.claimedSize;
+		else if (typeof revRec.storageSize === "number") size = revRec.storageSize;
 	}
 
 	return { uid, parentUid, name, isFolder, isTrashed, size, mtime, revisionUid, treeEventScopeId };

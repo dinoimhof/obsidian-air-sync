@@ -55,13 +55,39 @@ these tripped on):
    symptoms — a pre-existing file never syncing, newly created files staying
    local-only after a rescan — but both traced to this one cause: pushes had never
    once succeeded.
+7. **Every non-empty push failed sync's own post-write proof**, live-confirmed after
+   fixing bug 6 above: `platform/protondrive.ts` projected a node's `size` from
+   `NodeEntity.activeRevision.storageSize` — the *encrypted* size as stored on the
+   server — instead of `activeRevision.claimedSize`, the plaintext size recorded from
+   the `expectedSize` this backend itself uploads with. Since ciphertext is always
+   larger than plaintext, sync's terminal-size proof (`plan-executor.ts`'s
+   `proveAdmittedTerminal`, and `content-snapshot.ts`'s `captureContentSnapshot` for
+   conflict/merge reads) correctly refused to commit any non-empty write it couldn't
+   verify — that guardrail did its job, but against the wrong metric, so it tripped
+   on every single non-empty file. Symptoms cascaded from there: files stuck
+   "blocked" every cycle, spurious conflicts on later scans (an unverified write had
+   already landed on the remote, so the next cold scan saw real but unconfirmed
+   content there), and a rename racing an unconfirmed remote copy falling back to
+   Auto Merge's safe "keep both" duplicate behavior instead of a clean rename. Fixed
+   by preferring `claimedSize` (falling back to `storageSize` only when a revision —
+   e.g. one uploaded by another Proton client — has no `claimedSize`); pinned with a
+   dedicated `platform/protondrive.test.ts`, since nothing had unit-tested this
+   projection directly before (every other test mocks `platform/protondrive.ts`
+   away entirely). Only 0-byte files were unaffected by this bug (no content block,
+   so both sizes are legitimately 0), which is why the very first empty test file in
+   this backend's live verification round-tripped successfully and masked the issue.
 
 **As of this writing, connecting and folder binding/browsing are confirmed working
-live against a real account; push/pull sync (bug 6 above) is fixed and unit-tested
-but not yet re-verified live** — that is the next thing to confirm. The rest of the
-Step 11 checklist (multi-restart soak, crash-safety scenarios, mobile) has not yet
-been run. A fuller settings-UI pass (Step 8) remains optional, only if the current
-minimal one proves insufficient in practice.
+live against a real account; push/pull sync (bugs 6–7 above) is fixed and
+unit-tested but not yet re-verified live** — that is the next thing to confirm. Any
+duplicate files left over in a Drive folder from *before* bug 7 was fixed (a push
+that landed on the server but never got a committed `SyncRecord`, later resurfacing
+as an independent remote-only file) are not something Air Sync will delete on its
+own — per this project's "never derive a deletion from listing-absence alone"
+invariant, that's a one-time manual cleanup in the Drive folder, not a live sync
+bug. The rest of the Step 11 checklist (multi-restart soak, crash-safety scenarios,
+mobile) has not yet been run. A fuller settings-UI pass (Step 8) remains optional,
+only if the current minimal one proves insufficient in practice.
 
 ## Open risks and decisions
 
