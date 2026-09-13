@@ -66,7 +66,9 @@ export class ProtonAccountApi {
 		const res = await this.api.authenticatedRequest(`${PROTON_DRIVE_AUTH.apiBaseUrl}/core/v4/keys/all`, {
 			searchParams: { Email: email, InternalOnly: 1 },
 		});
-		if (!isOkResponse(res)) throw new Error(`Proton Drive: fetching keys for ${email} failed (${res.status})`);
+		// Deliberately does not echo `email` — it can be a THIRD PARTY's address (a
+		// sharing lookup), and this message can end up in .airsync/logs/ (see Logger).
+		if (!isOkResponse(res)) throw new Error(`Proton Drive: fetching keys for an address failed (${res.status})`);
 		if (!isRecord(res.json)) throw new Error("Proton Drive: invalid keys response");
 		return res.json;
 	}

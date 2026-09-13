@@ -61,14 +61,19 @@ export class ProtonDriveAddresses implements ProtonDriveAccount {
 	async getOwnAddress(emailOrAddressId: string): Promise<ProtonDriveAccountAddress> {
 		const { userPrimaryPrivateKeys, userPrimaryPublicKeys, addresses } = await this.getUserData();
 		const address = addresses.find((a) => a.ID === emailOrAddressId || a.Email === emailOrAddressId);
-		if (!address?.ID || !address.Email) throw new Error(`Proton Drive: address ${emailOrAddressId} not found`);
+		// Deliberately does not echo `emailOrAddressId`/the address email into the error
+		// message: both can be a real email address, and this message can end up in
+		// .airsync/logs/ (see Logger) — an opaque, non-identifying failure is enough to
+		// act on ("reconnect"), and the account-holder already knows what they searched for.
+		if (!address?.ID || !address.Email) throw new Error("Proton Drive: requested address not found on this account");
 
 		const keys: { id: string; key: ProtonKeyHandle }[] = [];
 		for (const key of address.Keys ?? []) {
 			const { id, privateKey } = await this.getAddressKey(userPrimaryPrivateKeys, userPrimaryPublicKeys, key);
 			keys.push({ id, key: privateKey });
 		}
-		if (keys.length === 0) throw new Error(`Proton Drive: no usable key for address ${address.Email}`);
+		// address.ID (opaque) instead of address.Email — see the note above.
+		if (keys.length === 0) throw new Error(`Proton Drive: no usable key for address ${address.ID}`);
 		return { email: address.Email, addressId: address.ID, primaryKeyIndex: 0, keys };
 	}
 

@@ -5,6 +5,7 @@
 
 import * as cryptoRuntime from "@protontech/crypto";
 import * as cryptoEndpointRuntime from "@protontech/crypto/proxy/endpoint/api.ts";
+import { installUint8ArrayHexBase64Polyfills } from "./protondrive-polyfills";
 
 const runtimeValue: unknown = cryptoRuntime;
 const endpointRuntimeValue: unknown = cryptoEndpointRuntime;
@@ -51,10 +52,14 @@ let initialized = false;
  * Install the concrete, WASM/worker-backed crypto endpoint behind `CryptoProxy` (the
  * SDK's abstract entry point). Idempotent and must be called before any other
  * function in this module — mirrors the reference implementation this backend's live
- * spike verified working (see docs/protondrive-backend.md).
+ * spike verified working (see docs/protondrive-backend.md). Also installs the
+ * `Uint8Array` hex/base64 polyfills (see protondrive-polyfills.ts) first — this
+ * module's dependencies assume those exist and work, which is not reliably true
+ * across every Electron/V8 build Obsidian ships on.
  */
 export function initProtonDriveCrypto(): void {
 	if (initialized) return;
+	installUint8ArrayHexBase64Polyfills();
 	const Endpoint = endpointConstructor();
 	Endpoint.init({});
 	const setEndpoint = proxyMember("setEndpoint");

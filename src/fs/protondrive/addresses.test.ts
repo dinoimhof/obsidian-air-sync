@@ -111,11 +111,29 @@ describe("ProtonDriveAddresses error handling", () => {
 		await expect(addresses.getOwnAddress("addr1")).rejects.toThrow("no key password");
 	});
 
-	it("throws for an unknown address id/email", async () => {
+	it("throws for an unknown address id/email, without echoing it back", async () => {
 		const { ProtonDriveAddresses } = await import("./addresses");
 		const addresses = new ProtonDriveAddresses(fakeAccountApi(), fakeAuth());
 
-		await expect(addresses.getOwnAddress("nope")).rejects.toThrow("not found");
+		const call = addresses.getOwnAddress("someone@example.com");
+		await expect(call).rejects.toThrow("not found");
+		// The searched value can be a real email address, and this message can end up
+		// in .airsync/logs/ (see Logger) — never echo it back.
+		await expect(call).rejects.not.toThrow(/someone@example\.com/);
+	});
+
+	it("throws for an address with no usable key, referencing its opaque id — not its email", async () => {
+		const accountApi = fakeAccountApi({
+			addresses: () => Promise.resolve({
+				Addresses: [{ ID: "addr1", Email: "someone@example.com", Keys: [] }],
+			}),
+		});
+		const { ProtonDriveAddresses } = await import("./addresses");
+		const addresses = new ProtonDriveAddresses(accountApi, fakeAuth());
+
+		const call = addresses.getOwnAddress("addr1");
+		await expect(call).rejects.toThrow("addr1");
+		await expect(call).rejects.not.toThrow(/someone@example\.com/);
 	});
 
 	it("re-fetches user data after a failure instead of caching the rejection", async () => {

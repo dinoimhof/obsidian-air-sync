@@ -57,6 +57,15 @@ describe("ProtonAccountApi", () => {
 		expect(url.searchParams.get("InternalOnly")).toBe("1");
 	});
 
+	it("keys() failure never echoes the (possibly third-party) email into the error — it can reach .airsync/logs/", async () => {
+		(await spyRequestUrl()).mockResolvedValue(mockRes({}, { status: 500 }));
+		const api = await makeAccountApi();
+
+		const call = api.keys("someone@example.com");
+		await expect(call).rejects.toThrow("500");
+		await expect(call).rejects.not.toThrow(/someone@example\.com/);
+	});
+
 	it("modulus() throws with the status on a non-200 response", async () => {
 		(await spyRequestUrl()).mockResolvedValue(mockRes({}, { status: 500 }));
 		const api = await makeAccountApi();
