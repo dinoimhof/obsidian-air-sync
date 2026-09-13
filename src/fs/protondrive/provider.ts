@@ -26,8 +26,14 @@ import { ProtonDriveClient, type ProtonDriveNode } from "./drive-client";
 import { ProtonDriveFs } from "./index";
 import { PROTON_DRIVE_BACKEND_TYPE, ProtonDriveAuthProvider } from "./auth";
 
-/** Secrets cleared on disconnect. `clientUid` is deliberately NOT here — see {@link getOrCreateClientUid}. */
-const PROTON_DRIVE_SECRET_NAMES = ["refresh", "access", "uid", "keyPassword"];
+/**
+ * Secrets cleared on disconnect. `client-uid` is deliberately NOT here — see
+ * {@link getOrCreateClientUid}. Names must be lowercase alphanumeric with only
+ * dashes (Obsidian's `SecretStorage.setSecret` throws on anything else — a
+ * camelCase name here previously broke every real connection attempt, caught
+ * only against the live API, never against a test double).
+ */
+const PROTON_DRIVE_SECRET_NAMES = ["refresh", "access", "uid", "key-password"];
 
 /** Proton Drive's slice of the active-backend `backendData` bag (tokens live in SecretStorage). */
 export interface ProtonDriveBackendData {
@@ -70,10 +76,10 @@ export class ProtonDriveProvider implements IBackendProvider {
 	 * lifetime on this installation, not just one session.
 	 */
 	private getOrCreateClientUid(): string {
-		const existing = getBackendSecret(this.secretStore, this.type, "clientUid");
+		const existing = getBackendSecret(this.secretStore, this.type, "client-uid");
 		if (existing) return existing;
 		const clientUid = crypto.randomUUID();
-		setBackendSecret(this.secretStore, this.type, "clientUid", clientUid);
+		setBackendSecret(this.secretStore, this.type, "client-uid", clientUid);
 		return clientUid;
 	}
 

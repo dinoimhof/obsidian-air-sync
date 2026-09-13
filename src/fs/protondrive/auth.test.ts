@@ -14,7 +14,7 @@ const SECRET_KEYS = {
 	refresh: "air-sync-protondrive-refresh-token",
 	access: "air-sync-protondrive-access-token",
 	uid: "air-sync-protondrive-uid-token",
-	keyPassword: "air-sync-protondrive-keyPassword-token",
+	keyPassword: "air-sync-protondrive-key-password-token",
 };
 
 async function makeProvider(secrets: Record<string, string> = {}) {

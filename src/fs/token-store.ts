@@ -1,6 +1,20 @@
 import type { ISecretStore } from "./secret-store";
 
 /**
+ * Obsidian's real `SecretStorage.setSecret(id, ...)` requires "Lowercase
+ * alphanumeric ID with optional dashes" and throws otherwise (obsidian.d.ts).
+ * No test double in this codebase enforces that constraint — a mock secret
+ * store is a plain map that accepts any string key — so a camelCase `name`
+ * (e.g. `"keyPassword"`) passes every unit test and only ever fails against
+ * the real API, surfacing as the opaque "Secret credential could not be
+ * saved securely" message with no indication the id itself was invalid. This
+ * validates eagerly, outside that catch-all, so the mistake is caught at the
+ * call site — in dev/tests, not silently deferred to a live connection
+ * attempt against a real account.
+ */
+const VALID_SECRET_ID_SEGMENT = /^[a-z0-9-]+$/;
+
+/**
  * Deterministic SecretStorage key for a backend secret.
  *
  * The format is intentionally stable (`air-sync-<type>-<name>-token`) so that
@@ -8,6 +22,13 @@ import type { ISecretStore } from "./secret-store";
  * users do not need to reconnect.
  */
 function secretKey(backendType: string, name: string): string {
+	if (!VALID_SECRET_ID_SEGMENT.test(backendType) || !VALID_SECRET_ID_SEGMENT.test(name)) {
+		throw new Error(
+			`Invalid backend secret id segment: backendType="${backendType}" name="${name}" ` +
+				"— Obsidian's SecretStorage requires lowercase alphanumeric with only dashes " +
+				"(use \"key-password\", not \"keyPassword\").",
+		);
+	}
 	return `air-sync-${backendType}-${name}-token`;
 }
 
@@ -40,9 +61,13 @@ export function publishBackendSecret(
 	if (!candidate) {
 		throw new Error("Required refresh token is missing");
 	}
+	// Computed OUTSIDE the try block: an invalid id is a programming error (see
+	// secretKey's own guard), not a runtime storage failure — it must surface with
+	// its own specific message, never get swallowed into the generic one below.
+	const key = secretKey(backendType, name);
 	try {
-		store.setSecret(secretKey(backendType, name), candidate);
-		if (store.getSecret(secretKey(backendType, name)) !== candidate) {
+		store.setSecret(key, candidate);
+		if (store.getSecret(key) !== candidate) {
 			throw new Error("readback mismatch");
 		}
 	} catch {

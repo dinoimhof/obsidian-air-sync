@@ -74,4 +74,32 @@ describe("backend secret store", () => {
 		expect(() => publishBackendSecret(store, "dropbox", "refresh", ""))
 			.toThrow("Required refresh token is missing");
 	});
+
+	// Obsidian's real SecretStorage.setSecret requires a "lowercase alphanumeric ID
+	// with optional dashes" and throws otherwise — a mock secret store (a plain map)
+	// never enforces that, so a camelCase name here previously passed every unit
+	// test and only ever failed against the live API (see Proton Drive's
+	// "keyPassword"/"clientUid", caught only by a real connection attempt). These
+	// pin the eager, specific rejection so the same mistake fails immediately for
+	// any future backend, in a test, with a clear message.
+	it.each(["keyPassword", "clientUid", "UPPER", "has_underscore", "has space"])(
+		"rejects an invalid secret name %j before it ever reaches the store",
+		(name) => {
+			const store = createMockSecretStore();
+			expect(() => setBackendSecret(store, "protondrive", name, "value"))
+				.toThrow(/lowercase alphanumeric/);
+		},
+	);
+
+	it("rejects an invalid name with its own specific error, not the generic publish failure", () => {
+		const store = createMockSecretStore();
+		expect(() => publishBackendSecret(store, "protondrive", "keyPassword", "candidate"))
+			.toThrow(/lowercase alphanumeric/);
+	});
+
+	it("accepts a dash-separated multi-word secret name", () => {
+		const store = createMockSecretStore();
+		setBackendSecret(store, "protondrive", "key-password", "kp");
+		expect(getBackendSecret(store, "protondrive", "key-password")).toBe("kp");
+	});
 });

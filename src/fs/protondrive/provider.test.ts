@@ -34,7 +34,7 @@ function settingsWith(backendData: Record<string, unknown> = {}): AirSyncSetting
 const CONNECTED = {
 	"air-sync-protondrive-refresh-token": "RT",
 	"air-sync-protondrive-uid-token": "UID1",
-	"air-sync-protondrive-keyPassword-token": "KP",
+	"air-sync-protondrive-key-password-token": "KP",
 };
 
 describe("ProtonDriveProvider.isConnected / getIdentity", () => {
@@ -72,7 +72,7 @@ describe("ProtonDriveProvider client uid persistence", () => {
 		// A fresh provider instance on the SAME secret store (simulating a plugin reload)
 		// must see the same clientUid — it survives even a backend switch away and back,
 		// unlike settings.backendData.
-		expect(store.getSecret("air-sync-protondrive-clientUid-token")).toBe(firstUid);
+		expect(store.getSecret("air-sync-protondrive-client-uid-token")).toBe(firstUid);
 	});
 });
 
@@ -96,7 +96,7 @@ describe("ProtonDriveProvider.disconnect / clearPluginSecrets", () => {
 	it("clears session secrets but preserves the per-installation clientUid", async () => {
 		const { provider, store } = await makeProvider({
 			...CONNECTED,
-			"air-sync-protondrive-clientUid-token": "STABLE-UID",
+			"air-sync-protondrive-client-uid-token": "STABLE-UID",
 		});
 
 		const reset = await provider.disconnect(settingsWith({ remoteVaultFolderId: "FID" }));
@@ -104,8 +104,8 @@ describe("ProtonDriveProvider.disconnect / clearPluginSecrets", () => {
 		expect(reset).toEqual({ remoteVaultFolderId: "", accessTokenExpiry: 0 });
 		expect(store.getSecret("air-sync-protondrive-refresh-token")).toBeFalsy();
 		expect(store.getSecret("air-sync-protondrive-uid-token")).toBeFalsy();
-		expect(store.getSecret("air-sync-protondrive-keyPassword-token")).toBeFalsy();
-		expect(store.getSecret("air-sync-protondrive-clientUid-token")).toBe("STABLE-UID");
+		expect(store.getSecret("air-sync-protondrive-key-password-token")).toBeFalsy();
+		expect(store.getSecret("air-sync-protondrive-client-uid-token")).toBe("STABLE-UID");
 	});
 });
 

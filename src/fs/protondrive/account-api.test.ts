@@ -16,7 +16,7 @@ async function makeAccountApi() {
 		"air-sync-protondrive-refresh-token": "RT",
 		"air-sync-protondrive-access-token": "AT",
 		"air-sync-protondrive-uid-token": "UID",
-		"air-sync-protondrive-keyPassword-token": "KP",
+		"air-sync-protondrive-key-password-token": "KP",
 	});
 	const provider = new ProtonDriveAuthProvider(store, undefined, () => Promise.resolve());
 	const auth = provider.getOrCreateAuth();

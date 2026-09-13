@@ -20,13 +20,13 @@ vi.mock("./protondrive/drive-client", () => ({ ProtonDriveClient: class {} }));
 
 // A secret store that satisfies any backend's token lookup, so each provider's
 // createFs() can build its FS for the pairing check below (createFs returns null
-// without a refresh token). `keyPassword` is Proton Drive-specific (see
+// without a refresh token). `key-password` is Proton Drive-specific (see
 // `ProtonDriveAuthProvider.isAuthenticated`).
 const connectedSecretStore: ISecretStore = {
 	getSecret: (id: string) =>
 		id.includes("refresh") ? "RT"
 			: id.includes("access") ? "AT"
-				: id.includes("keyPassword") ? "KP"
+				: id.includes("key-password") ? "KP"
 					: null,
 	setSecret: () => {},
 };

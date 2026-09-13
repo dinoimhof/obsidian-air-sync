@@ -180,7 +180,7 @@ export class ProtonDriveAuthProvider implements IAuthProvider {
 				uid: getBackendSecret(this.secretStore, PROTON_DRIVE_BACKEND_TYPE, "uid"),
 				refreshToken,
 				accessToken: getBackendSecret(this.secretStore, PROTON_DRIVE_BACKEND_TYPE, "access"),
-				keyPassword: getBackendSecret(this.secretStore, PROTON_DRIVE_BACKEND_TYPE, "keyPassword"),
+				keyPassword: getBackendSecret(this.secretStore, PROTON_DRIVE_BACKEND_TYPE, "key-password"),
 			});
 		}
 		this.auth = auth;
@@ -190,7 +190,7 @@ export class ProtonDriveAuthProvider implements IAuthProvider {
 	isAuthenticated(_backendData: Record<string, unknown>): boolean {
 		return (
 			hasBackendSecret(this.secretStore, PROTON_DRIVE_BACKEND_TYPE, "refresh")
-			&& hasBackendSecret(this.secretStore, PROTON_DRIVE_BACKEND_TYPE, "keyPassword")
+			&& hasBackendSecret(this.secretStore, PROTON_DRIVE_BACKEND_TYPE, "key-password")
 		);
 	}
 
@@ -228,7 +228,7 @@ export class ProtonDriveAuthProvider implements IAuthProvider {
 			publishBackendSecret(this.secretStore, PROTON_DRIVE_BACKEND_TYPE, "refresh", tokens.refreshToken);
 			setBackendSecret(this.secretStore, PROTON_DRIVE_BACKEND_TYPE, "access", tokens.accessToken);
 			publishBackendSecret(this.secretStore, PROTON_DRIVE_BACKEND_TYPE, "uid", auth.getUid());
-			publishBackendSecret(this.secretStore, PROTON_DRIVE_BACKEND_TYPE, "keyPassword", auth.getKeyPassword());
+			publishBackendSecret(this.secretStore, PROTON_DRIVE_BACKEND_TYPE, "key-password", auth.getKeyPassword());
 			return { accessTokenExpiry: tokens.accessTokenExpiry };
 		}
 	}
