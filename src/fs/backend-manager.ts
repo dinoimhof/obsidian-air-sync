@@ -490,9 +490,20 @@ export class BackendManager {
 			}
 
 			// Sweep plugin-owned tokens for every registered backend (old, new, and any
-			// stray leftovers). Idempotent and network-free.
+			// stray leftovers). Idempotent and network-free. Isolated per provider: one
+			// backend's sweep failing (e.g. an OS-keychain quirk clearing a secret that
+			// was never set) must not abort the switch, nor skip sweeping the rest —
+			// every OTHER backend's switch would otherwise break too, since this loop
+			// runs unconditionally regardless of which backend is being switched to.
 			for (const p of getAllBackendProviders()) {
-				p.clearPluginSecrets?.();
+				try {
+					p.clearPluginSecrets?.();
+				} catch (e) {
+					this.deps.getLogger().warn("Clearing plugin secrets failed for a backend (continuing)", {
+						backendType: p.type,
+						error: e instanceof Error ? e.message : String(e),
+					});
+				}
 			}
 
 			// Discard the OLD target's sync state so a switch leaves no orphan — before

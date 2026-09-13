@@ -75,10 +75,23 @@ export class AirSyncSettingTab extends PluginSettingTab {
 					dropdown
 						.setValue(this.plugin.settings.backendType)
 						.onChange(async (value) => {
-							if (this.plugin.settings.backendType !== value) {
-								// Full reset: clears all backend params + sweeps every
-								// backend's plugin tokens, so the new one starts clean.
-								await this.plugin.backendManager.switchBackend(value);
+							try {
+								if (this.plugin.settings.backendType !== value) {
+									// Full reset: clears all backend params + sweeps every
+									// backend's plugin tokens, so the new one starts clean.
+									await this.plugin.backendManager.switchBackend(value);
+								}
+							} catch (err) {
+								// A failed switch must not leave the tab showing the OLD
+								// backend's connection section while the dropdown (a native
+								// <select>, updated by the browser regardless of what this
+								// handler does) already shows the NEW selection — that
+								// mismatch is confusing and looks like the new backend is
+								// silently broken. Surface the real error and always
+								// re-render below so the tab reflects whatever backendType
+								// actually ended up persisted.
+								const msg = err instanceof Error ? err.message : String(err);
+								new Notice(`Could not switch backend: ${msg}`);
 							}
 							this.renderContent();
 						});

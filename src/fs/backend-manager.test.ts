@@ -324,6 +324,23 @@ describe("BackendManager — switchBackend (hard reset)", () => {
 		expect(otherClearSpy).toHaveBeenCalled();
 	});
 
+	it("isolates one backend's clearPluginSecrets failure — the switch still completes and every other backend is still swept", async () => {
+		const failingClear = vi.fn(() => { throw new Error("keychain quirk"); });
+		const otherClearSpy = vi.fn();
+		fakeProvider.clearPluginSecrets = failingClear;
+		otherProvider.clearPluginSecrets = otherClearSpy;
+		const settings = mockSettings();
+		const deps = createDeps(settings);
+		const mgr = new BackendManager(deps);
+		await mgr.initBackend();
+
+		await expect(mgr.switchBackend("other")).resolves.toBeUndefined();
+
+		expect(failingClear).toHaveBeenCalled();
+		expect(otherClearSpy).toHaveBeenCalled();
+		expect(settings.backendType).toBe("other");
+	});
+
 	it("best-effort revokes the old backend only when it was connected", async () => {
 		const disconnectSpy = vi.fn().mockResolvedValue({});
 		fakeProvider.disconnect = disconnectSpy;
