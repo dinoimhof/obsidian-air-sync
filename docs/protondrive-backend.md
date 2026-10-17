@@ -14,7 +14,7 @@ This document owns the Proton-specific design judgements. Wire protocols and cry
 | `drive-api.ts` | `ProtonDriveApi`, the narrow set of Drive operations the adapter uses, with branded uids. The contract harness implements it with an in-memory fake. |
 | `sdk-drive-api.ts` | `ProtonDriveApi` over the SDK's `ProtonDriveClient`; the SDK-to-`DriveNode` parse boundary. |
 | `sdk-client.ts` | Builds the SDK client: crypto endpoint, caches, account, SRP, telemetry, polyfills. |
-| `transport.ts` | Every Proton HTTP request, over `context.http` (`requestUrl`). Session headers, one refresh-and-replay on 401, timeouts. |
+| `transport.ts` | Every Proton HTTP request, over `context.http` (`requestUrl`), and only to `https://*.proton.me`. Session headers, one refresh-and-replay on an API-host 401, timeouts. |
 | `session.ts` / `fork-login.ts` / `account.ts` | Sign-in, session storage and refresh, the user's address keys. |
 | `errors.ts` | SDK and transport failures to the public error taxonomy. |
 | `redact.ts` | Keeps credentials and personal data out of error messages and logs: the route sanitizer and the logger-boundary scrubber. |
@@ -30,7 +30,7 @@ Proton cannot redirect back to Obsidian, so the module declares `auth.completion
 **Resuming.** On mobile, Obsidian is often suspended or killed while the user is in the browser, so the poll cannot be trusted to finish in one call. `start` also sets the non-secret `pendingAuthState` marker in backend data (the fork's expiry time); a successful `complete` unsets it. While the marker is set and no session is stored, core calls `complete` again at start-up and whenever Obsidian returns to the foreground. The pending fork survives an interrupted poll: `complete` deletes it only once Proton releases the session, when it expires, or when Proton rejects it (a 4xx other than 422, 408 and 429). A network, timeout, 5xx or rate-limit failure rethrows and keeps it, and core shows no notice for it; the next resume polls again, and its first poll answers at once when the user has already signed in. An expired or rejected fork is an `auth` error: core clears the marker and reports it. Each poll re-reads the stored fork, so pressing Connect during a pending sign-in starts a fresh fork that replaces the old one.
 
 - **Stored secret**: one SecretStorage entry (`session`) holding the session UID, access token, refresh token and the **user-key password**. The key password decrypts the account's private keys, which Drive needs for every name and file. It is as sensitive as the account password for Proton data.
-- **Refresh**: on a 401 the transport refreshes once and replays the request. Refresh is single-flight per connection and re-reads SecretStorage first, because another connection of the module (binding, a rebuilt adapter) may already have rotated the refresh token, and Proton rejects a replayed one.
+- **Refresh**: on a 401 from the API host the transport refreshes once and replays the request. A 401 from a storage host is about that request's block token, so it never refreshes the session. Refresh is single-flight per connection and re-reads SecretStorage first, because another connection of the module (binding, a rebuilt adapter) may already have rotated the refresh token, and Proton rejects a replayed one.
 - **Disconnect**: revokes the session (`DELETE auth/v4`), then core clears the secret.
 - **Client identity**: requests carry `x-pm-appversion: external-drive-air_sync@<module version>-alpha`, the shape Proton requires of third-party clients. A random `clientUid` in backend data marks this install's upload drafts, so the SDK may delete its own abandoned drafts.
 
@@ -65,6 +65,24 @@ Proton Drive has one folder control, core's **Remote folder** row, shown whether
 `resolveDefault` binds `folderPath` when set, else `obsidian-air-sync/<vault>`. It walks the path from My files, reuses every existing folder and creates only the missing ones (`folder-path.ts`). An empty, `.` or `..` segment, or a file in the way, is a permanent error. The binding is the folder's node uid, so renaming or moving the folder in Proton keeps syncing.
 
 Because the row is shown before connecting, the folder can be chosen before signing in. When `folderPath` is set, `auth.complete` resolves it right after storing the session and returns `remoteVaultFolderId` in its patch, so the vault is bound and syncing as soon as sign-in finishes. When it is empty the vault stays unbound until the user uses the row. If resolving the folder fails after a successful sign-in, the session is kept, the vault stays unbound (core's notice asks to choose a folder), and the error is logged; **Use this folder** then retries the same path and shows the error. Disconnect keeps `folderPath` and nothing else, so reconnecting rebinds the same folder.
+
+## Transport allowlist
+
+Every request carries the session (`Authorization`, `x-pm-uid`), and the SDK takes storage
+block URLs from server responses. The transport therefore refuses, before sending, any URL
+that is not `https` on `proton.me` or one of its subdomains. That covers the API host
+(`drive-api.proton.me`) and the regional `*-storage.proton.me` hosts. A response naming any
+other host cannot make Air Sync send the session there. The transport sends the normalized
+URL it validated, never the raw string, and it refuses userinfo, backslashes, whitespace and
+control characters, so a URL that another parser would read as a different host never
+reaches the platform HTTP stack.
+
+Only a 401 from the API host refreshes the session. Storage requests authenticate with
+their block token, and the SDK renews an expired one on a 404. Two things are still
+unverified: whether storage hosts need the session headers at all, and whether one ever
+answers 401. The live E2E moves real blocks, so it confirms that the storage hosts pass the
+allowlist, but it does not settle these two questions. They are on the manual live
+checklist.
 
 ## Logs and error messages
 
