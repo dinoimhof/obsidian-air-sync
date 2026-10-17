@@ -1,7 +1,7 @@
 /**
  * Guards the Proton Drive polyfills against the failure seen live: Obsidian's Electron
  * exposed `Uint8Array` hex/base64 methods that were present but not callable, and the
- * first SDK call that named a node crashed. Two checks, both on the real code:
+ * first SDK call that named a node crashed. Three checks, all on the real code:
  *
  * 1. The production polyfill entry (bundled exactly as esbuild bundles main.js) leaves
  *    working `toHex`/`toBase64`/`fromHex`/`fromBase64` behind even when all four exist but
@@ -57,8 +57,10 @@ function evaluationOrder(entry) {
 		seen.add(file);
 		for (const [, specifier] of readFileSync(file, "utf8").matchAll(/^import (?!type )[^"]*"([^"]+)";$/gm)) {
 			if (specifier.startsWith(".")) {
-				const target = resolve(dirname(file), `${specifier}.ts`);
-				if (existsSync(target)) visit(target);
+				// A file, or a directory with an index (e.g. ../../backend-api).
+				const base = resolve(dirname(file), specifier);
+				const target = [`${base}.ts`, resolve(base, "index.ts")].find((candidate) => existsSync(candidate));
+				if (target) visit(target);
 			} else if (!seen.has(specifier)) {
 				seen.add(specifier);
 				order.push(specifier);
