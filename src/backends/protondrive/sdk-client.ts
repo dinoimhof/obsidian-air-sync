@@ -1,8 +1,5 @@
-// Built-ins the SDK and its crypto package call that older Android WebViews lack.
-import "core-js/proposals/array-buffer-base64";
-import "core-js/actual/array/from-async";
-import "core-js/actual/iterator";
-import "core-js/actual/promise/with-resolvers";
+// First: the polyfills must run before any @protontech module evaluates (see polyfills.ts).
+import "./polyfills";
 import { CryptoProxy } from "@protontech/crypto";
 import { Api as CryptoApi } from "@protontech/crypto/proxy/endpoint/api.ts";
 import { computeKeyPassword, generateKeySalt, getRandomSrpVerifier, getSrp } from "@protontech/crypto/srp";

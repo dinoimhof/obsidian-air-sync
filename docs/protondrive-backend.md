@@ -122,6 +122,8 @@ Node uids stay in messages: they are opaque, and they are needed to diagnose a s
 
 `@protontech/crypto` (GPL-3.0) and Proton's OpenPGP.js fork (LGPL-3.0) are bundled into `main.js` with the SDK (MIT), about 770 KB minified of the 1.2 MB bundle. A build that includes this backend is therefore distributed under the GPL-3.0 terms of the combined work.
 
+**Polyfills.** `polyfills.ts` is the first import of `sdk-client.ts`, so it runs before any `@protontech` module. It first probes `toHex`, `toBase64`, `fromHex` and `fromBase64` by calling them on known values and deletes any that exist but do not work (`broken-builtins.ts`). Then core-js installs spec-complete versions of whatever is missing. core-js alone repairs a broken `toHex`/`toBase64`, but it keeps a present `fromHex` and a `fromBase64` that throws, and a partial rollout of exactly this kind (`toHex` present but not callable) crashed the first SDK call in live testing. `protondrive-polyfill-guard.test.mjs` pins both the repair and the import order.
+
 `@protontech/crypto` ships untranspiled TypeScript that does not compile under this repo's compiler options. `tsconfig.json` maps its specifiers to the type declarations in `protontech-crypto.d.ts`; esbuild (`tsconfig.bundle.json`) and Vitest (`server.deps.inline`) resolve the real package.
 
 ## Verification

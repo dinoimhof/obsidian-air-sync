@@ -132,6 +132,17 @@ candidate for the future external-artifact boundary.
 | **How** | textual import scan over `src/backend-api/**/*.ts` and all non-test `src/backends/**/*.ts`; `tests/backend-api/fake-module.ts` is the compile fixture that builds a module with only the public API |
 | **Exception** | none. The public API carries the provider-neutral runtime helpers a module bundles; nothing under `src/fs/**` or `src/queue/` is reachable from a backend |
 
+The Proton Drive module depends on `Uint8Array` hex/base64 built-ins that some Electron
+builds expose without implementing them. That failure crashed the first SDK call in live
+testing, and no unit test double reproduces it.
+
+| | |
+|---|---|
+| **Prevents** | (a) the production polyfill entry leaving a present-but-broken `toHex`/`toBase64`/`fromHex`/`fromBase64` in place (core-js alone keeps a present `fromHex` and some broken `fromBase64`s); (b) an `@protontech/*` module, or core-js, evaluating before `broken-builtins.ts` in the backend's import graph |
+| **Where** | `protondrive-polyfill-guard.test.mjs`, run by `npm run lint:bot-repro` |
+| **How** | bundles `src/backends/protondrive/polyfills.ts` with esbuild and runs it in a fresh Node process where all four methods exist and throw; walks the static import graph from `module.ts` in evaluation order |
+| **Exception** | none |
+
 Runtime validation (`src/fs/modules/validate-module.ts`) is authoritative for a candidate
 module shape; TypeScript compatibility alone is insufficient for a future dynamically loaded
 JavaScript artifact. `*-custom` ids are legacy settings aliases and are rejected as module
