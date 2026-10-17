@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CryptoProxy } from "@protontech/crypto";
 import type { BackendRuntimeContext } from "../../backend-api";
 import type { ClientUid } from "./sdk-client";
 import { openProtonDrive, releaseProtonDrive, telemetry } from "./sdk-client";
-import { SESSION_SECRET_KEY } from "./session";
+import { SESSION_SECRET_KEY, SessionHandle } from "./session";
+import { Api as CryptoApi } from "@protontech/crypto/proxy/endpoint/api.ts";
 
 describe("SDK telemetry bridge", () => {
 	it("scrubs emails and tokens from SDK log messages and errors", () => {
@@ -57,14 +57,36 @@ describe("Proton Drive connection lifetime", () => {
 		await expect(openProtonDrive(context, "client" as ClientUid)).resolves.toBeDefined();
 	});
 
-	it("releases the crypto endpoint (clearing its key store) and forgets every connection", async () => {
+	it("opens the session (and so imports the keys) once for repeated calls on one context", async () => {
 		const context = contextWithSession();
-		const first = await openProtonDrive(context, "client" as ClientUid);
-		const release = vi.spyOn(CryptoProxy, "releaseEndpoint");
+		const open = vi.spyOn(SessionHandle, "open");
+		await Promise.all([openProtonDrive(context, "client" as ClientUid), openProtonDrive(context, "client" as ClientUid)]);
+		await openProtonDrive(context, "client" as ClientUid);
+		expect(open).toHaveBeenCalledTimes(1);
+	});
+
+	it("clears the crypto key store and forgets every connection on release", async () => {
+		const other = contextWithSession();
+		const first = await openProtonDrive(other, "client" as ClientUid);
+		const clear = vi.spyOn(CryptoApi.prototype, "clearKeyStore");
 
 		await releaseProtonDrive();
 
-		expect(release).toHaveBeenCalledTimes(1);
-		expect(await openProtonDrive(context, "client" as ClientUid)).not.toBe(first);
+		expect(clear).toHaveBeenCalledTimes(1);
+		expect(await openProtonDrive(other, "client" as ClientUid)).not.toBe(first);
+	});
+
+	it("never reconnects a revoked context", async () => {
+		const context = contextWithSession();
+		await openProtonDrive(context, "client" as ClientUid);
+		await releaseProtonDrive(context);
+		await expect(openProtonDrive(context, "client" as ClientUid)).rejects.toMatchObject({ kind: "auth" });
+	});
+
+	it("does not let an open that was in flight during a release set the key store up again", async () => {
+		const context = contextWithSession();
+		const opening = openProtonDrive(context, "client" as ClientUid);
+		await releaseProtonDrive();
+		await expect(opening).rejects.toMatchObject({ kind: "auth" });
 	});
 });

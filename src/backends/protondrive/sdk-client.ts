@@ -85,8 +85,13 @@ export interface ProtonConnection {
  * weakly: a context core drops takes its connection with it.
  */
 let connections = new WeakMap<BackendRuntimeContext, Map<string, Promise<ProtonConnection>>>();
+/** Contexts whose connection was revoked; core never reuses one after a disconnect. */
+const revoked = new WeakSet<BackendRuntimeContext>();
+/** Bumped on every release, so an open already in flight cannot set the key store up again. */
+let releases = 0;
 
 export function openProtonDrive(context: BackendRuntimeContext, clientUid: ClientUid): Promise<ProtonConnection> {
+	if (revoked.has(context)) return Promise.resolve().then(() => failBackend("auth", "Proton Drive was disconnected"));
 	let byClient = connections.get(context);
 	if (!byClient) {
 		byClient = new Map();
@@ -104,7 +109,9 @@ export function openProtonDrive(context: BackendRuntimeContext, clientUid: Clien
  * Forget every connection and release the crypto endpoint, which clears its key store:
  * no decrypted private key outlives a disconnect. The next connection sets it up again.
  */
-export async function releaseProtonDrive(): Promise<void> {
+export async function releaseProtonDrive(context?: BackendRuntimeContext): Promise<void> {
+	if (context) revoked.add(context);
+	releases++;
 	connections = new WeakMap();
 	if (!cryptoEndpointSet) return;
 	cryptoEndpointSet = false;
@@ -112,7 +119,9 @@ export async function releaseProtonDrive(): Promise<void> {
 }
 
 async function connect(context: BackendRuntimeContext, clientUid: ClientUid): Promise<ProtonConnection> {
+	const started = releases;
 	const session = await SessionHandle.open(context.secrets);
+	if (releases !== started || revoked.has(context)) failBackend("auth", "Proton Drive was disconnected while connecting");
 	const transport = new ProtonTransport(context.http, session);
 	ensureCryptoEndpoint();
 	const client = new ProtonDriveClient({

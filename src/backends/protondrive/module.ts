@@ -70,10 +70,13 @@ const auth: BackendAuth = {
 			const session = await SessionHandle.open(context.secrets).catch(() => null);
 			if (session) await new ProtonTransport(context.http, session).json("DELETE", "auth/v4");
 		} finally {
-			// Whatever the provider answered: no half-finished sign-in and no decrypted key
-			// survives a disconnect.
-			await context.secrets.delete(FORK_SECRET_KEY);
-			await releaseProtonDrive();
+			// Whatever the provider answered: no decrypted key and no half-finished sign-in
+			// survives a disconnect. Keys first, so a failing secret delete cannot keep them.
+			try {
+				await releaseProtonDrive(context);
+			} finally {
+				await context.secrets.delete(FORK_SECRET_KEY);
+			}
 		}
 	},
 };
