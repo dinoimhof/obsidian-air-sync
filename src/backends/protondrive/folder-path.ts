@@ -1,5 +1,6 @@
 import { failBackend } from "../shared/error-shape";
 import type { DriveNode, ProtonDriveApi } from "./drive-api";
+import { isSafeNodeName } from "./names";
 
 declare const folderPathBrand: unique symbol;
 
@@ -13,7 +14,7 @@ export function parseFolderPath(input: string): FolderPath {
 	const trimmed = input.trim().replace(/^\//, "").replace(/\/$/, "");
 	const segments = trimmed.split("/");
 	for (const segment of segments) {
-		if (segment.trim() === "" || segment === "." || segment === "..") {
+		if (segment.trim() === "" || !isSafeNodeName(segment)) {
 			failBackend("permanent", "The Proton Drive folder path is not valid: every segment must be a folder name (no empty, \".\" or \"..\" segment).");
 		}
 	}

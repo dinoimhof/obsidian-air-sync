@@ -248,7 +248,7 @@ export class ProtonDriveAdapter implements RemoteBackendAdapter {
 		const projection = projectNode(node, this.rootUid);
 		if (projection.kind === "object") return projection.object;
 		if (projection.kind === "unnamed" && (await this.isUnderRoot(node))) {
-			failBackend("unverifiable", `Proton Drive node ${node.uid} has a name that cannot be decrypted`);
+			failBackend("unverifiable", `Proton Drive node ${node.uid} has a name that cannot be decrypted or is not a valid path segment`);
 		}
 		return null;
 	}

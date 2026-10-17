@@ -53,6 +53,7 @@ The SDK's entity cache is a `NullCache`, so every node read is a fresh API read.
 
 - Excluded from the view: trashed nodes, drafts (a file whose first upload never committed), Proton Docs and Sheets (`application/vnd.proton.*`), and album and photo nodes.
 - A node whose **name** does not decrypt has no path. If it is inside the bound root, listing and delta fail with `unverifiable`: its absence would otherwise read as a deletion.
+- A decrypted name that cannot be one path segment is treated the same way: empty, `.`, `..`, or containing `/`, `\`, NUL, another C0 control character or DEL (`names.ts`). The SDK only checks that a name is non-empty and short enough, and another client can write such a name. Typed folder paths follow the same rule.
 - A node the SDK reports with other decryption errors (for example an undecryptable node key) is projected without version token or checksum: it cannot be read, so core treats it as unverifiable.
 
 ## Binding

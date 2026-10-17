@@ -56,3 +56,23 @@ describe("ProtonDriveAdapter with an undecryptable name", () => {
 		expect(await adapter.getChanges("event-1")).toEqual({ kind: "changes", nextCursor: "event-1", changes: [] });
 	});
 });
+
+describe("ProtonDriveAdapter with an unsafe name", () => {
+	for (const name of ["..", ".", "a/b", "a\\b", "evil\u0000", "line\nbreak", "del\u007f"]) {
+		it(`fails the listing for ${JSON.stringify(name)} inside the bound root`, async () => {
+			const adapter = new ProtonDriveAdapter(drive([...tree, folder("vol~bad", "vol~sub" as NodeUid, name)]), ROOT);
+			await expect(adapter.listAll()).rejects.toMatchObject({ kind: "unverifiable" });
+		});
+	}
+
+	it("ignores an unsafe name outside the bound root", async () => {
+		const bad = folder("vol~bad", OUTSIDE, "..");
+		const adapter = new ProtonDriveAdapter(drive([...tree, bad], [bad.uid]), ROOT);
+		expect(await adapter.getChanges("event-1")).toEqual({ kind: "changes", nextCursor: "event-1", changes: [] });
+	});
+
+	it("still lists ordinary names, including dots and spaces inside them", async () => {
+		const adapter = new ProtonDriveAdapter(drive([...tree, folder("vol~ok", "vol~sub" as NodeUid, "my notes.v2 (1)")]), ROOT);
+		expect((await adapter.listAll()).map((object) => object.name).sort()).toEqual(["my notes.v2 (1)", "sub"]);
+	});
+});

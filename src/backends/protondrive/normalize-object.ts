@@ -1,5 +1,6 @@
 import type { RemoteObject } from "../../backend-api";
 import type { DriveNode, NodeUid } from "./drive-api";
+import { isSafeNodeName } from "./names";
 
 /** Proton Docs/Sheets: provider-native objects with no byte content (RB-SVC-010). */
 const PROTON_NATIVE_MEDIA_TYPE_PREFIX = "application/vnd.proton.";
@@ -8,7 +9,7 @@ export type Projection =
 	| { readonly kind: "object"; readonly object: RemoteObject }
 	/** Outside the sync view: trashed, a draft, the root itself, or not a byte-backed file/folder. */
 	| { readonly kind: "excluded" }
-	/** A live node whose name cannot be decrypted, so it has no path. */
+	/** A live node whose name cannot be decrypted, or is not a safe path segment, so it has no path. */
 	| { readonly kind: "unnamed" };
 
 export function projectNode(node: DriveNode, rootUid: NodeUid): Projection {
@@ -18,7 +19,7 @@ export function projectNode(node: DriveNode, rootUid: NodeUid): Projection {
 	if (node.kind === "file" && (!node.revision || node.mediaType?.startsWith(PROTON_NATIVE_MEDIA_TYPE_PREFIX))) {
 		return { kind: "excluded" };
 	}
-	if (node.name === null) return { kind: "unnamed" };
+	if (node.name === null || !isSafeNodeName(node.name)) return { kind: "unnamed" };
 	const base = {
 		id: node.uid,
 		name: node.name,
