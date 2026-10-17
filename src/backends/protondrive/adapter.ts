@@ -224,9 +224,35 @@ export class ProtonDriveAdapter implements RemoteBackendAdapter {
 		const uid = observed.id as NodeUid;
 		const currentParent = observed.location.addressing === "parent_id" ? observed.location.parentId : null;
 		const targetParent = (parentId ?? this.rootUid) as NodeUid;
-		// Proton has no combined move+rename: the rename lands first, in the source folder.
-		if (observed.name !== name) await this.drive.rename(uid, name);
-		if (currentParent !== targetParent) await this.drive.move(uid, targetParent);
+		const renaming = observed.name !== name;
+		const moving = currentParent !== targetParent;
+		if (!moving) {
+			if (renaming) await this.drive.rename(uid, name);
+			return this.observeCommitted(uid);
+		}
+		// Proton has no combined move+rename, so the node passes through an intermediate
+		// address. Check both folders first, so a clash fails before any provider call
+		// rather than leaving the node half-moved.
+		const occupied = async (folder: NodeUid, wanted: string): Promise<boolean> =>
+			(await this.drive.listChildren(folder)).some((child) => child.uid !== uid && child.name === wanted);
+		if (await occupied(targetParent, name)) {
+			failBackend("target_changed", `Proton Drive destination for node ${uid} is already occupied`);
+		}
+		if (!renaming) {
+			await this.drive.move(uid, targetParent);
+			return this.observeCommitted(uid);
+		}
+		// Rename in the source folder, then move; unless the new name is taken there, in which
+		// case move first (under the old name) and rename in the destination.
+		if (!(await occupied((currentParent ?? this.rootUid) as NodeUid, name))) {
+			await this.drive.rename(uid, name);
+			await this.drive.move(uid, targetParent);
+		} else if (!(await occupied(targetParent, observed.name))) {
+			await this.drive.move(uid, targetParent);
+			await this.drive.rename(uid, name);
+		} else {
+			failBackend("target_changed", `Proton Drive cannot move node ${uid} without an intermediate name clash`);
+		}
 		return this.observeCommitted(uid);
 	}
 

@@ -142,3 +142,68 @@ describe("ProtonDriveAdapter version-bound read", () => {
 		await expect(adapter.read({ id: "vol~note", versionToken: "vol~note~rev1" })).resolves.toMatchObject({ kind: "unverifiable" });
 	});
 });
+
+describe("ProtonDriveAdapter move", () => {
+	function file(uid: string, parentUid: NodeUid, name: string): DriveNode {
+		return { uid: uid as NodeUid, parentUid, name, kind: "file", trashed: false, degraded: false, revision: { uid: `${uid}~r` as never, size: 1 } };
+	}
+
+	/** A tree whose rename/move apply in place and record their order. */
+	function mutableDrive(nodes: DriveNode[]) {
+		const calls: string[] = [];
+		const byUid = (uid: NodeUid) => nodes.findIndex((node) => node.uid === uid);
+		const api: ProtonDriveApi = {
+			...drive(nodes),
+			getNodes: (uids) => Promise.resolve(new Map(uids.flatMap((uid) => { const n = nodes[byUid(uid)]; return n ? [[uid, n] as const] : []; }))),
+			listChildren: (parent) => Promise.resolve(nodes.filter((node) => node.parentUid === parent)),
+			rename: (uid, name) => {
+				calls.push(`rename:${name}`);
+				const i = byUid(uid);
+				nodes[i] = { ...nodes[i]!, name };
+				return Promise.resolve();
+			},
+			move: (uid, parent) => {
+				calls.push(`move:${parent}`);
+				const i = byUid(uid);
+				nodes[i] = { ...nodes[i]!, parentUid: parent };
+				return Promise.resolve();
+			},
+		};
+		return { api, calls };
+	}
+
+	const SUB = "vol~sub" as NodeUid;
+	const run = (api: ProtonDriveApi, name: string, parentId: NodeUid) =>
+		new ProtonDriveAdapter(api, ROOT).move({
+			id: "vol~note",
+			expected: { id: "vol~note", versionToken: "vol~note~r" },
+			destination: { addressing: "parent_id", parentId, name },
+		});
+
+	it("renames in the source folder, then moves, when nothing clashes", async () => {
+		const { api, calls } = mutableDrive([...tree, file("vol~note", ROOT, "a.md")]);
+		await run(api, "b.md", SUB);
+		expect(calls).toEqual(["rename:b.md", `move:${SUB}`]);
+	});
+
+	it("moves first when the new name is taken in the source folder", async () => {
+		const { api, calls } = mutableDrive([...tree, file("vol~note", ROOT, "a.md"), file("vol~other", ROOT, "b.md")]);
+		const moved = await run(api, "b.md", SUB);
+		expect(calls).toEqual([`move:${SUB}`, "rename:b.md"]);
+		expect(moved).toMatchObject({ name: "b.md", location: { parentId: SUB } });
+	});
+
+	it("fails before any provider call when the destination is occupied", async () => {
+		const { api, calls } = mutableDrive([...tree, file("vol~note", ROOT, "a.md"), file("vol~taken", SUB, "b.md")]);
+		await expect(run(api, "b.md", SUB)).rejects.toMatchObject({ kind: "target_changed" });
+		expect(calls).toEqual([]);
+	});
+
+	it("fails before any provider call when both orders would clash", async () => {
+		const { api, calls } = mutableDrive([
+			...tree, file("vol~note", ROOT, "a.md"), file("vol~src", ROOT, "b.md"), file("vol~dst", SUB, "a.md"),
+		]);
+		await expect(run(api, "b.md", SUB)).rejects.toMatchObject({ kind: "target_changed" });
+		expect(calls).toEqual([]);
+	});
+});

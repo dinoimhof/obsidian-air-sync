@@ -42,7 +42,7 @@ Proton cannot redirect back to Obsidian, so the module declares `auth.completion
 - **Checksum**: the plaintext SHA-1 the uploader stored in the encrypted extended attributes, projected as `sha1`. Air Sync always uploads with its SHA-1, and the SDK refuses the upload if the bytes differ. Files uploaded by clients that omit the digest have no checksum, so core treats them as unverifiable instead of comparing them. A version-bound `read` recomputes the SHA-1 of the downloaded bytes and returns `unverifiable` if it disagrees with the claim, because core compares files by that claim without downloading them.
 - **Capabilities**: Proton refuses a second node with the same name in a folder (`exclusiveCreate`). It offers no precondition core can carry: a new revision is checked against the active revision the SDK reads just before it, not against core's observation, and move, rename and trash take no version. So `conditionalContentUpdate` is `"none"` and `conditionalMetadataMutation` is `false`; the adapter compares before mutating.
 - **Delete** moves the node to Proton's trash.
-- **Move with rename** is two calls, because the SDK has none that does both: rename in the source folder, then move.
+- **Move with rename** is two calls, because the SDK has none that does both. The adapter checks both folders first. It renames in the source folder and then moves, or, when the new name is taken in the source folder, moves first and renames in the destination. A clash in the destination, or in both orders, fails as `target_changed` before any provider call, so a node is never left half-moved.
 
 ### Change feed
 
