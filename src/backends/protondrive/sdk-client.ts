@@ -35,7 +35,8 @@ function ensureCryptoEndpoint(): void {
 	cryptoEndpointSet = true;
 }
 
-function srpModule(transport: ProtonTransport): SRPModule {
+/** The SDK's SRP module (public-link passwords), over the module's transport. Exported for tests. */
+export function srpModule(transport: ProtonTransport): SRPModule {
 	return {
 		getSrp: (version, modulus, serverEphemeral, salt, password) =>
 			getSrp({ Version: version, Modulus: modulus, ServerEphemeral: serverEphemeral, Salt: salt }, { password }),

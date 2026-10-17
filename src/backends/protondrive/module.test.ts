@@ -3,6 +3,7 @@ import type { BackendRuntimeContext, BackendSecretStore } from "../../backend-ap
 import type { DriveNode, NodeUid, ProtonDriveApi } from "./drive-api";
 import { FORK_SECRET_KEY, completeFork } from "./fork-login";
 import { protonDriveModule } from "./module";
+import { ProtonDriveAdapter } from "./adapter";
 import { openProtonDrive, releaseProtonDrive, type ProtonConnection } from "./sdk-client";
 import type { ProtonSession } from "./session";
 import { SESSION_SECRET_KEY } from "./session";
@@ -34,7 +35,7 @@ class FolderTree {
 				const uid = this.add(`vol~new-${this.created.length}`, parent, name);
 				return Promise.resolve(this.nodes.find((node) => node.uid === uid)!);
 			},
-			getNodes: unreachable,
+			getNodes: (uids) => Promise.resolve(new Map(this.nodes.filter((node) => uids.includes(node.uid)).map((node) => [node.uid, node] as const))),
 			latestEventId: unreachable,
 			readEvents: unreachable,
 			downloadRevision: unreachable,
@@ -226,5 +227,72 @@ describe("protondrive auth.revoke", () => {
 
 		expect(secrets.has(FORK_SECRET_KEY)).toBe(false);
 		expect(releaseProtonDrive).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("protondrive binding and module surface", () => {
+	it("keeps an already bound folder without any provider call", async () => {
+		vi.mocked(openProtonDrive).mockClear();
+		const result = await protonDriveModule.binding.resolveDefault(context, { remoteVaultFolderId: "vol~bound" }, "Vault");
+		expect(result).toEqual({ patch: {}, target: { id: "vol~bound" } });
+		expect(openProtonDrive).not.toHaveBeenCalled();
+	});
+
+	it("refuses to resolve a default folder for an empty vault name", async () => {
+		await expect(protonDriveModule.binding.resolveDefault(context, {}, "  ")).rejects.toMatchObject({ kind: "permanent" });
+	});
+
+	it("lists only the safe folder names directly under My files", async () => {
+		tree.add("vol~a", MY_FILES, "notes");
+		tree.add("vol~b", MY_FILES, "a/b");
+		tree.add("vol~c", MY_FILES, "doc.md", "file");
+		expect(await protonDriveModule.binding.listAppRootFolders?.(context, {})).toEqual(["notes"]);
+	});
+
+	it("shows the bound folder's path from My files, or nothing for an unknown folder", async () => {
+		const notes = tree.add("vol~notes", MY_FILES, "notes");
+		const inner = tree.add("vol~inner", notes, "vault");
+		expect(await protonDriveModule.binding.getDisplayPath?.(context, {}, { id: inner })).toEqual({ id: inner, displayPath: "/notes/vault" });
+		expect(await protonDriveModule.binding.getDisplayPath?.(context, {}, { id: "vol~missing" })).toBeNull();
+	});
+
+	it("builds the adapter over the bound folder", async () => {
+		const adapter = await protonDriveModule.createAdapter(context, { clientUid: "c" }, { id: "vol~root" });
+		expect(adapter).toBeInstanceOf(ProtonDriveAdapter);
+		expect(adapter.addressing).toBe("parent_id");
+	});
+});
+
+describe("protondrive auth.start", () => {
+	it("opens Proton's sign-in page and marks the sign-in as pending", async () => {
+		vi.stubGlobal("window", { setTimeout, clearTimeout });
+		const opened: string[] = [];
+		const values = new Map<string, string>();
+		const startContext = {
+			http: {
+				request: () =>
+					Promise.resolve({
+						status: 200,
+						headers: {},
+						text: () => Promise.resolve(""),
+						arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+						json: () => Promise.resolve({ Code: 1000, Selector: "SEL", UserCode: "CODE" }),
+					}),
+			},
+			secrets: {
+				get: (key: string) => Promise.resolve(values.get(key) ?? null),
+				set: (key: string, value: string) => Promise.resolve(void values.set(key, value)),
+				delete: (key: string) => Promise.resolve(void values.delete(key)),
+			},
+			logger: { debug: () => undefined, info: () => undefined, warn: () => undefined, error: () => undefined },
+			auth: { openExternal: (url: string) => Promise.resolve(void opened.push(url)) },
+		} as BackendRuntimeContext;
+
+		const patch = await protonDriveModule.auth.start(startContext, {});
+
+		expect(opened).toHaveLength(1);
+		expect(new URL(opened[0]!).origin).toBe("https://account.proton.me");
+		expect(patch.set?.pendingAuthState).toEqual(expect.any(String));
+		expect(values.has(FORK_SECRET_KEY)).toBe(true);
 	});
 });
