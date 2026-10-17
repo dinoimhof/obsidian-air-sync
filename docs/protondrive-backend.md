@@ -17,6 +17,7 @@ This document owns the Proton-specific design judgements. Wire protocols and cry
 | `transport.ts` | Every Proton HTTP request, over `context.http` (`requestUrl`). Session headers, one refresh-and-replay on 401, timeouts. |
 | `session.ts` / `fork-login.ts` / `account.ts` | Sign-in, session storage and refresh, the user's address keys. |
 | `errors.ts` | SDK and transport failures to the public error taxonomy. |
+| `redact.ts` | Keeps credentials and personal data out of error messages and logs: the route sanitizer and the logger-boundary scrubber. |
 
 The SDK does not ship login, session management or account keys. `account.ts` is adapted from Proton's MIT-licensed incubating `proton-drive-sdk-account` package, which is not published to npm and uses `fetch` and Node crypto.
 
@@ -64,6 +65,25 @@ Proton Drive has one folder control, core's **Remote folder** row, shown whether
 `resolveDefault` binds `folderPath` when set, else `obsidian-air-sync/<vault>`. It walks the path from My files, reuses every existing folder and creates only the missing ones (`folder-path.ts`). An empty, `.` or `..` segment, or a file in the way, is a permanent error. The binding is the folder's node uid, so renaming or moving the folder in Proton keeps syncing.
 
 Because the row is shown before connecting, the folder can be chosen before signing in. When `folderPath` is set, `auth.complete` resolves it right after storing the session and returns `remoteVaultFolderId` in its patch, so the vault is bound and syncing as soon as sign-in finishes. When it is empty the vault stays unbound until the user uses the row. If resolving the folder fails after a successful sign-in, the session is kept, the vault stays unbound (core's notice asks to choose a folder), and the error is logged; **Use this folder** then retries the same path and shows the error. Disconnect keeps `folderPath` and nothing else, so reconnecting rebinds the same folder.
+
+## Logs and error messages
+
+Error messages and module logs end up in `.airsync/logs/` inside the vault, so they never
+carry a credential or personal data. There are two layers:
+
+- **At the source.** A failed Proton API call is reported as its method, a sanitized route
+  and the status/code (`GET core/v4/keys/all failed (422/33102)`). The sanitizer drops the
+  query and replaces every path segment that is not a short lowercase route word with
+  `{id}`, so an email in `keys/all?Email=…` or the fork selector in
+  `sessions/forks/<selector>` never appears. Proton's free-text `Error` is not included.
+  Account errors never name an address, and the configured folder path and typed folder
+  input are never echoed.
+- **At the logger boundary.** Module messages and the SDK's own log lines (bridged in
+  `sdk-client.ts`) pass through a scrubber. It removes email addresses, `Bearer` values,
+  fork selectors, query strings and credential fields, and redacts context values under
+  credential-like keys. It is defense in depth for anything a future SDK version might log.
+
+Node uids stay in messages: they are opaque, and they are needed to diagnose a sync failure.
 
 ## Bundle and licensing
 

@@ -98,9 +98,9 @@ query parameters and `Bearer` values. Logs live in `.airsync/logs/` inside the v
 
 **Change, with two layers.**
 1. **At the source:** messages carry the method, a sanitized route and the numeric code
-   only. A generic sanitizer drops the query string and replaces id-like path segments
-   (containing `~`, `=` or `@`, or longer than 20 characters) with `{id}`, so new routes
-   are covered without a template list. Emails, the selector, the configured folder path and
+   only. A generic sanitizer drops the query string and replaces every path segment that
+   is not a short lowercase route word (`core`, `v4`, `forks`) with `{id}`. Because it is
+   an allowlist, new routes and new id shapes are covered without a template list. Emails, the selector, the configured folder path and
    Proton's free-text detail never appear.
 2. **At the module's logger boundary**, including SDK telemetry: a scrubber removes email
    addresses, fork selectors, bearer and refresh tokens, and query strings as defense in
