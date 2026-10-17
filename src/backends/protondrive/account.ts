@@ -105,7 +105,7 @@ export class ProtonAccount implements ProtonDriveAccount {
 
 	async getOwnAddress(emailOrAddressId: string): Promise<ProtonDriveAccountAddress> {
 		const address = (await this.addresses()).find((a) => a.id === emailOrAddressId || a.email === emailOrAddressId);
-		if (!address) throw new Error(`Proton address ${emailOrAddressId} not found`);
+		if (!address) throw new Error("The requested Proton address was not found on this account");
 		return this.decryptAddress(address);
 	}
 
@@ -168,7 +168,7 @@ export class ProtonAccount implements ProtonDriveAccount {
 	private async decryptAddress(address: AddressDto): Promise<ProtonDriveAccountAddress> {
 		const settled = await Promise.allSettled(address.keys.map((key) => this.addressKey(key)));
 		const keys = settled.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
-		if (keys.length === 0) throw new Error(`No key of Proton address ${address.email} could be decrypted`);
+		if (keys.length === 0) throw new Error("No key of one of the account's Proton addresses could be decrypted");
 		return { email: address.email, addressId: address.id, primaryKeyIndex: 0, keys };
 	}
 
@@ -195,7 +195,7 @@ export class ProtonAccount implements ProtonDriveAccount {
 			verificationKeys: publicKeys,
 		});
 		if (verificationStatus !== VERIFICATION_STATUS.SIGNED_AND_VALID) {
-			throw new Error(`Proton address key ${key.id} token signature is not valid`);
+			throw new Error("A Proton address key token signature is not valid");
 		}
 		return { id: key.id, key: await this.crypto.importPrivateKey({ armoredKey: key.privateKey, passphrase: data }) };
 	}
