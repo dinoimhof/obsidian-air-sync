@@ -5,8 +5,9 @@ import { createHttpClient } from "../../src/fs/modules/http-host";
 import { loadDotEnvE2e } from "./env";
 
 /**
- * The Proton module's secrets (session tokens plus the user-key password) as a
- * gitignored JSON file, rewritten whenever the module saves a secret.
+ * The Proton module's secrets (session tokens plus the user-key password, sealed under a
+ * client key Proton holds for the session) as a gitignored JSON file, rewritten whenever
+ * the module saves a secret.
  */
 export function protonSecretsPath(): string {
 	loadDotEnvE2e();

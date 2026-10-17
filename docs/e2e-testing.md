@@ -121,7 +121,7 @@ redirect URI once:
 
 Tokens are long-lived; redo the bootstrap only if one is revoked.
 
-Proton Drive has no OAuth app or redirect. `npm run e2e:bootstrap -- protondrive` runs the module's own `auth.start`/`auth.complete`: it prints an `account.proton.me` sign-in URL, polls until you have signed in, and writes the module's secrets (session tokens and the user-key password) to the gitignored `.e2e-protondrive-secrets.json` (mode 600; override the path with `AIRSYNC_E2E_PROTONDRIVE_SECRETS`). The e2e rewrites that file whenever Proton rotates the refresh token. Use a throwaway Proton account.
+Proton Drive has no OAuth app or redirect. `npm run e2e:bootstrap -- protondrive` runs the module's own `auth.start`/`auth.complete`: it prints an `account.proton.me` sign-in URL, polls until you have signed in, and writes the module's secrets (session tokens and the user-key password sealed under a client key Proton holds for that session) to the gitignored `.e2e-protondrive-secrets.json` (mode 600; override the path with `AIRSYNC_E2E_PROTONDRIVE_SECRETS`). The e2e rewrites that file whenever Proton rotates the refresh token. A file written before sealing existed counts as no session: bootstrap again. Use a throwaway Proton account. The file still holds working session tokens, so keep it out of backups and delete it when done.
 
 ## Environment variables
 
