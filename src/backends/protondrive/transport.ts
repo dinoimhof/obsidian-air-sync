@@ -19,7 +19,7 @@ export class ProtonApiError extends Error {
 		readonly status: number,
 		readonly code: number | undefined,
 		message: string,
-		/** From `Retry-After`, bounded; core's retry policy honours it on 429/503. */
+		/** From `Retry-After`, bounded; core's retry policy uses it on 429/503, up to its own cap. */
 		readonly retryAfterMs?: number,
 	) {
 		super(message);
@@ -247,7 +247,9 @@ export class ProtonTransport {
 			throw toBackendError(backendError("rate_limit", "Proton rate-limited the session refresh", { retryAfterMs: retryAfterMsFrom(response.headers) }));
 		}
 		if (response.status >= 400 && response.status < 500) return null;
-		if (response.status !== 200) failBackend("transient", `Proton session refresh failed (${response.status})`);
+		if (response.status !== 200) {
+			throw toBackendError(backendError("transient", `Proton session refresh failed (${response.status})`, { retryAfterMs: retryAfterMsFrom(response.headers) }));
+		}
 		const data = await response.json();
 		if (typeof data !== "object" || data === null || Array.isArray(data)) return null;
 		return parseSessionTokens({

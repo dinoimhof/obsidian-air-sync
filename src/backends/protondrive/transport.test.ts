@@ -174,3 +174,32 @@ describe("Retry-After", () => {
 		expect(err).toMatchObject({ status: 429, retryAfterMs: 3000 });
 	});
 });
+
+describe("Retry-After on the session refresh", () => {
+	async function refreshAnswering(status: number) {
+		const values = new Map<string, string>();
+		const secrets = {
+			get: (key: string) => Promise.resolve(values.get(key) ?? null),
+			set: (key: string, value: string) => Promise.resolve(void values.set(key, value)),
+			delete: (key: string) => Promise.resolve(void values.delete(key)),
+		};
+		await saveSession(secrets, { uid: "UID", accessToken: "AT", refreshToken: "RT", keyPassword: "KP" } as ProtonSession);
+		const http: BackendHttpClient = {
+			request: (request) =>
+				Promise.resolve(
+					request.url.endsWith("/auth/v4/refresh")
+						? { ...reply(status, { Code: 2028 }), headers: { "retry-after": "4" } }
+						: reply(401, { Code: 401 }),
+				),
+		};
+		return new ProtonTransport(http, await SessionHandle.open(secrets)).json("GET", "core/v4/users").catch((e: unknown) => e);
+	}
+
+	it("carries the hint on a rate-limited refresh", async () => {
+		expect(await refreshAnswering(429)).toMatchObject({ kind: "rate_limit", retryAfterMs: 4000 });
+	});
+
+	it("carries the hint on a refresh that fails with 503", async () => {
+		expect(await refreshAnswering(503)).toMatchObject({ kind: "transient", retryAfterMs: 4000 });
+	});
+});
