@@ -342,19 +342,28 @@ describe("protondrive local key", () => {
 	}
 
 	/** A Proton that holds one local key per session, as auth/v4/sessions/local/key does. */
-	function proton(put: { status: number } = { status: 200 }) {
+	function proton(put: { status: number | "network" } = { status: 200 }, get: { status?: number } = {}) {
 		let held: string | null = null;
+		const deletes: string[] = [];
 		const request = (r: { url: string; method?: string; body?: unknown }) => {
+			if (r.method === "DELETE") {
+				deletes.push(new URL(r.url).pathname);
+				return answer(200, { Code: 1000 });
+			}
 			if (r.url.endsWith("/auth/v4/sessions/local/key") && r.method === "PUT") {
+				if (put.status === "network") return Promise.reject(new Error("offline"));
 				if (put.status !== 200) return answer(put.status, { Code: 2001 });
 				held = (JSON.parse(String(r.body)) as { Key: string }).Key;
 				return answer(200, { Code: 1000 });
 			}
-			if (r.url.endsWith("/auth/v4/sessions/local/key")) return held ? answer(200, { Code: 1000, ClientKey: held }) : answer(401, { Code: 401 });
+			if (r.url.endsWith("/auth/v4/sessions/local/key")) {
+				if (get.status !== undefined) return answer(get.status, { Code: 2000 });
+				return held ? answer(200, { Code: 1000, ClientKey: held }) : answer(401, { Code: 401 });
+			}
 			if (r.url.endsWith("/auth/v4/refresh")) return answer(401, { Code: 401 });
 			return Promise.reject(new Error(`unexpected ${r.url}`));
 		};
-		return { request, revoke: () => void (held = null) };
+		return { request, deletes, registered: () => held, revoke: () => void (held = null) };
 	}
 
 	async function signIn(http: { request: unknown }, values: Map<string, string>, logged: string[] = []) {
@@ -379,6 +388,8 @@ describe("protondrive local key", () => {
 		const raw = values.get(SESSION_SECRET_KEY) ?? "";
 		expect(raw).not.toContain("the-key-password");
 		expect(JSON.parse(raw)).toMatchObject({ uid: "UID", sealedKeyPassword: expect.any(String) as unknown });
+		// The client key lives only at Proton: never next to the blob it opens.
+		expect(raw).not.toContain(server.registered() ?? "unreachable");
 
 		const handle = await SessionHandle.open(store(values));
 		await expect(keyPasswordOf(new ProtonTransport(server as never, handle), handle.current)).resolves.toBe("the-key-password");
@@ -405,13 +416,64 @@ describe("protondrive local key", () => {
 		await expect(keyPasswordOf(new ProtonTransport(server as never, handle), handle.current)).rejects.toMatchObject({ kind: "auth" });
 	});
 
-	it("local key: falls back to a marked plaintext key password when Proton refuses, warning once without values", async () => {
+	it("local key: falls back to a marked plaintext key password only on an explicit permission refusal, warning once without values", async () => {
 		const values = new Map<string, string>();
 		const logged: string[] = [];
-		await signIn(proton({ status: 422 }), values, logged);
+		await signIn(proton({ status: 403 }), values, logged);
 
 		expect(JSON.parse(values.get(SESSION_SECRET_KEY) ?? "{}")).toMatchObject({ keyPassword: "the-key-password", keyPasswordAtRest: "plaintext" });
 		expect(logged.filter((line) => line.includes("refused a local key"))).toHaveLength(1);
 		expect(logged.join("\n")).not.toContain("the-key-password");
+	});
+});
+
+describe("protondrive local key failures", () => {
+	const fork = { uid: "UID", accessToken: "AT", refreshToken: "RT", keyPassword: "the-key-password" } as unknown as ProtonSession;
+	const answer = (status: number, body: Record<string, unknown>) =>
+		Promise.resolve({ status, headers: {}, text: () => Promise.resolve(JSON.stringify(body)), arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)), json: () => Promise.resolve(body) });
+	const store = (values: Map<string, string>): BackendSecretStore => ({
+		get: (key) => Promise.resolve(values.get(key) ?? null),
+		set: (key, value) => Promise.resolve(void values.set(key, value)),
+		delete: (key) => Promise.resolve(void values.delete(key)),
+	});
+
+	function context(putStatus: number | "network", values: Map<string, string>, deletes: string[]): BackendRuntimeContext {
+		const request = (r: { url: string; method?: string }) => {
+			if (r.method === "DELETE") return Promise.resolve(void deletes.push(new URL(r.url).pathname)).then(() => answer(200, { Code: 1000 }));
+			if (putStatus === "network") return Promise.reject(new Error("offline"));
+			return answer(putStatus, { Code: 2001 });
+		};
+		const quiet = () => undefined;
+		return { http: { request }, secrets: store(values), logger: { debug: quiet, info: quiet, warn: quiet, error: quiet }, auth: { openExternal: () => Promise.resolve() } } as unknown as BackendRuntimeContext;
+	}
+
+	it.each([400, 408, 422, 500, 503, "network"] as const)("local key: a %s on registration stores nothing, revokes the new session and asks to connect again", async (status) => {
+		vi.stubGlobal("window", { setTimeout, clearTimeout });
+		vi.mocked(completeFork).mockResolvedValue(fork);
+		const values = new Map<string, string>();
+		const deletes: string[] = [];
+
+		await expect(protonDriveModule.auth.complete(context(status, values, deletes), "", {})).rejects.toMatchObject({ kind: "auth" });
+
+		expect(values.has(SESSION_SECRET_KEY)).toBe(false);
+		expect(deletes).toEqual(["/auth/v4"]);
+	});
+
+	it("local key: a transient failure fetching the key is not a reconnect prompt", async () => {
+		vi.stubGlobal("window", { setTimeout, clearTimeout });
+		const values = new Map<string, string>([[SESSION_SECRET_KEY, JSON.stringify({ uid: "UID", accessToken: "AT", refreshToken: "RT", sealedKeyPassword: "AAAA" })]]);
+		const handle = await SessionHandle.open(store(values));
+		const transport = new ProtonTransport({ request: () => answer(503, { Code: 2000 }) } as never, handle);
+		const err = await keyPasswordOf(transport, handle.current).catch((e: unknown) => e);
+		expect(err).toMatchObject({ status: 503 });
+		expect(err).not.toMatchObject({ kind: "auth" });
+	});
+
+	it("local key: disconnect revokes a session stored in a shape this version does not open", async () => {
+		vi.stubGlobal("window", { setTimeout, clearTimeout });
+		const values = new Map<string, string>([[SESSION_SECRET_KEY, JSON.stringify({ uid: "UID", accessToken: "AT", refreshToken: "RT", keyPassword: "old" })]]);
+		const deletes: string[] = [];
+		await protonDriveModule.auth.revoke?.(context(200, values, deletes), {});
+		expect(deletes).toEqual(["/auth/v4"]);
 	});
 });

@@ -22,7 +22,7 @@ import { findOrCreateFolderPath, listMyFilesFolders, parseFolderPath } from "./f
 import { FORK_SECRET_KEY, beginFork, completeFork } from "./fork-login";
 import type { ClientUid } from "./sdk-client";
 import { openProtonDrive, releaseProtonDrive } from "./sdk-client";
-import { SESSION_SECRET_KEY, SessionHandle, saveSession } from "./session";
+import { SESSION_SECRET_KEY, SessionHandle, loadSessionTokens, saveSession } from "./session";
 import { ProtonTransport } from "./transport";
 import { sealKeyPassword } from "./local-key";
 import { scrubbingLogger } from "./redact";
@@ -50,7 +50,17 @@ const auth: BackendAuth = {
 		});
 		// Register a local key for the new session and keep only the sealed key password.
 		const handle = SessionHandle.forSignIn(context.secrets, session);
-		const atRest = await sealKeyPassword(new ProtonTransport(context.http, handle), session.uid, session.keyPassword, scrubbingLogger(context.logger));
+		const signInTransport = new ProtonTransport(context.http, handle);
+		let atRest;
+		try {
+			atRest = await sealKeyPassword(signInTransport, session.uid, session.keyPassword, scrubbingLogger(context.logger));
+		} catch (err) {
+			// The fork is already consumed: revoke the new session rather than leave a live
+			// one nobody holds, store nothing, and ask for a fresh sign-in.
+			await signInTransport.json("DELETE", "auth/v4").catch(() => undefined);
+			scrubbingLogger(context.logger).warn("Proton Drive sign-in could not be completed securely", { message: errorMessage(err) });
+			failBackend("auth", "Proton Drive sign-in could not be completed securely. Click Connect again.");
+		}
 		await saveSession(context.secrets, { ...handle.tokens, ...atRest });
 		const clientUid = clientUidOf(config);
 		const folderPath = configuredFolderPath(config);
@@ -71,8 +81,10 @@ const auth: BackendAuth = {
 	},
 	revoke: async (context) => {
 		try {
-			const session = await SessionHandle.open(context.secrets).catch(() => null);
-			if (session) await new ProtonTransport(context.http, session).json("DELETE", "auth/v4");
+			// Revoke by the stored tokens alone, so a session in a shape this version no longer
+			// opens (e.g. stored before sealing) is still revoked at Proton.
+			const tokens = await loadSessionTokens(context.secrets);
+			if (tokens) await new ProtonTransport(context.http, SessionHandle.forSignIn(context.secrets, tokens)).json("DELETE", "auth/v4");
 		} finally {
 			// Whatever the provider answered: no decrypted key and no half-finished sign-in
 			// survives a disconnect. Keys first, so a failing secret delete cannot keep them.

@@ -88,6 +88,18 @@ export async function saveSession(secrets: BackendSecretStore, session: StoredSe
 	await secrets.set(SESSION_SECRET_KEY, JSON.stringify(session));
 }
 
+/** Just the tokens of whatever session is stored, for revoking it at Proton. */
+export async function loadSessionTokens(secrets: BackendSecretStore): Promise<SessionTokens | null> {
+	const raw = await secrets.get(SESSION_SECRET_KEY);
+	if (!raw) return null;
+	try {
+		const record = JSON.parse(raw) as Record<string, unknown>;
+		return parseSessionTokens({ UID: record.uid, AccessToken: record.accessToken, RefreshToken: record.refreshToken });
+	} catch {
+		return null;
+	}
+}
+
 export async function loadSession(secrets: BackendSecretStore): Promise<StoredSession | null> {
 	return parseStoredSession(await secrets.get(SESSION_SECRET_KEY));
 }

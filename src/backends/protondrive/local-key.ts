@@ -38,9 +38,13 @@ function aesKey(raw: Uint8Array<ArrayBuffer>, usage: KeyUsage): Promise<CryptoKe
 
 const additionalData = (uid: string) => new TextEncoder().encode(AAD_PREFIX + uid);
 
-/** A 4xx other than auth or rate limiting: Proton will not hold a local key for this session. */
-function isRefusal(err: unknown): boolean {
-	return err instanceof ProtonApiError && err.status >= 400 && err.status < 500 && err.status !== 401 && err.status !== 429;
+/**
+ * Only an explicit permission refusal (403) means "this kind of session may not hold a local
+ * key". Anything else (a timeout, a validation or app-version code, an unknown answer) is an
+ * ordinary failure and fails closed: it never downgrades to the plaintext form.
+ */
+function isPermissionRefusal(err: unknown): boolean {
+	return err instanceof ProtonApiError && err.status === 403;
 }
 
 /** Register a fresh client key for the session and seal the key password under it. */
@@ -54,7 +58,7 @@ export async function sealKeyPassword(
 	try {
 		await transport.json("PUT", LOCAL_KEY_PATH, { Key: toBase64(clientKey) });
 	} catch (err) {
-		if (!isRefusal(err)) throw err;
+		if (!isPermissionRefusal(err)) throw err;
 		logger.warn("Proton refused a local key for this session; its key password is stored without that extra protection");
 		return { keyPassword, keyPasswordAtRest: "plaintext" };
 	}
@@ -78,8 +82,9 @@ export async function keyPasswordOf(transport: ProtonTransport, session: StoredS
 	try {
 		response = await transport.json("GET", LOCAL_KEY_PATH);
 	} catch (err) {
-		// Proton no longer holds a key for this session (revoked, signed out elsewhere).
-		if (isRefusal(err) || (err instanceof ProtonApiError && err.status === 401)) failBackend("auth", reconnect);
+		// A 401 here survived a refresh: Proton no longer knows this session (revoked, signed
+		// out elsewhere). Anything else keeps its ordinary classification (retry, update, …).
+		if (err instanceof ProtonApiError && err.status === 401) failBackend("auth", reconnect);
 		throw err;
 	}
 	if (typeof response.ClientKey !== "string" || response.ClientKey === "") failBackend("auth", reconnect);

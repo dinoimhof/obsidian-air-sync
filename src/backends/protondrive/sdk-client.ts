@@ -12,6 +12,7 @@ import { ProtonAccount } from "./account";
 import { PROTON_API_HOST } from "./constants";
 import type { ProtonDriveApi } from "./drive-api";
 import { SdkDriveApi } from "./sdk-drive-api";
+import type { KeyPassword } from "./session";
 import { SessionHandle } from "./session";
 import { ProtonTransport } from "./transport";
 import { keyPasswordOf } from "./local-key";
@@ -121,7 +122,14 @@ async function connect(context: BackendRuntimeContext, clientUid: ClientUid): Pr
 	const started = releases;
 	const session = await SessionHandle.open(context.secrets);
 	const transport = new ProtonTransport(context.http, session);
-	const keyPassword = await keyPasswordOf(transport, session.current);
+	// Unlocked on first use, not here: opening a connection needs no network, so an offline
+	// start still yields an adapter, and a failed unlock is retried by the next operation.
+	let unlocking: Promise<KeyPassword> | null = null;
+	const keyPassword = (): Promise<KeyPassword> =>
+		(unlocking ??= keyPasswordOf(transport, session.current).catch((err: unknown) => {
+			unlocking = null;
+			throw err;
+		}));
 	if (releases !== started || revoked.has(context)) failBackend("auth", "Proton Drive was disconnected while connecting");
 	ensureCryptoEndpoint();
 	const client = new ProtonDriveClient({

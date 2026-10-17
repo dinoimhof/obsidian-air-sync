@@ -225,3 +225,22 @@ describe("session routes and refresh", () => {
 		expect(paths).toEqual(["/auth/v4/sessions/local/key", "/auth/v4/refresh", "/auth/v4/sessions/local/key"]);
 	});
 });
+
+describe("unauthenticated auth routes after the narrowing", () => {
+	it("never refreshes on a 401 from the fork routes, the refresh route or core auth", async () => {
+		const values = new Map<string, string>();
+		const secrets = {
+			get: (key: string) => Promise.resolve(values.get(key) ?? null),
+			set: (key: string, value: string) => Promise.resolve(void values.set(key, value)),
+			delete: (key: string) => Promise.resolve(void values.delete(key)),
+		};
+		await saveSession(secrets, { uid: "UID", accessToken: "AT", refreshToken: "RT", sealedKeyPassword: "sealed" } as StoredSession);
+		const paths: string[] = [];
+		const http: BackendHttpClient = { request: (request) => Promise.resolve(void paths.push(new URL(request.url).pathname)).then(() => reply(401, { Code: 401 })) };
+		const transport = new ProtonTransport(http, await SessionHandle.open(secrets));
+		for (const path of ["auth/v4/sessions/forks", "auth/v4/sessions/forks/SEL", "core/v4/auth/modulus"]) {
+			await transport.json("GET", path).catch(() => undefined);
+		}
+		expect(paths).toEqual(["/auth/v4/sessions/forks", "/auth/v4/sessions/forks/SEL", "/core/v4/auth/modulus"]);
+	});
+});

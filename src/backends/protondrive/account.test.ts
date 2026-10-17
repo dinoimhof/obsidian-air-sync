@@ -15,7 +15,7 @@ function account(addresses: JsonValue, userKeys: JsonValue = [], crypto?: Partia
 	const failing = {
 		importPrivateKey: () => Promise.reject(new Error(`Incorrect key passphrase for ${EMAIL}`)),
 	};
-	return new ProtonAccount(transport, { ...failing, ...crypto } as unknown as CryptoApiInterface, "kp" as KeyPassword);
+	return new ProtonAccount(transport, { ...failing, ...crypto } as unknown as CryptoApiInterface, () => Promise.resolve("kp" as KeyPassword));
 }
 
 async function messageOf(promise: Promise<unknown>): Promise<string> {
@@ -116,7 +116,7 @@ describe("ProtonAccount primary address, primary key and pagination", () => {
 				return Promise.resolve({ Code: 1000, Addresses: pages[page] ?? [] });
 			},
 		} as unknown as ProtonTransport;
-		const own = await new ProtonAccount(transport, opens as unknown as CryptoApiInterface, "kp" as KeyPassword).getOwnAddresses();
+		const own = await new ProtonAccount(transport, opens as unknown as CryptoApiInterface, () => Promise.resolve("kp" as KeyPassword)).getOwnAddresses();
 		expect(own).toHaveLength(52);
 		expect(requested).toEqual(["core/v4/addresses?Page=0&PageSize=50", "core/v4/addresses?Page=1&PageSize=50"]);
 	});

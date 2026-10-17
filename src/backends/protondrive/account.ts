@@ -102,7 +102,8 @@ export class ProtonAccount implements ProtonDriveAccount {
 	constructor(
 		private readonly transport: ProtonTransport,
 		private readonly crypto: CryptoApiInterface,
-		private readonly keyPassword: KeyPassword,
+		/** Unlocked on first use (it may need a network call); memoized by the caller. */
+		private readonly keyPassword: () => Promise<KeyPassword>,
 	) {}
 
 	async getOwnPrimaryAddress(): Promise<ProtonDriveAccountAddress> {
@@ -194,7 +195,8 @@ export class ProtonAccount implements ProtonDriveAccount {
 		for (const raw of rawKeys) {
 			const armoredKey = str(raw.PrivateKey);
 			if (!armoredKey) continue;
-			const privateKey = await this.crypto.importPrivateKey({ armoredKey, passphrase: this.keyPassword }).catch(() => null);
+			const passphrase = await this.keyPassword();
+			const privateKey = await this.crypto.importPrivateKey({ armoredKey, passphrase }).catch(() => null);
 			if (!privateKey) continue;
 			privateKeys.push(privateKey);
 			publicKeys.push(await this.publicOf(privateKey));
@@ -242,7 +244,7 @@ export class ProtonAccount implements ProtonDriveAccount {
 	/** Legacy address keys use the key password directly; current ones a token signed by the user key. */
 	private async decryptAddressKey(key: AddressKeyDto): Promise<{ id: string; key: PrivateKeyReference }> {
 		if (!key.token) {
-			return { id: key.id, key: await this.crypto.importPrivateKey({ armoredKey: key.privateKey, passphrase: this.keyPassword }) };
+			return { id: key.id, key: await this.crypto.importPrivateKey({ armoredKey: key.privateKey, passphrase: await this.keyPassword() }) };
 		}
 		const { privateKeys, publicKeys } = await this.userKeys();
 		const { data, verificationStatus } = await this.crypto.decryptMessage({
