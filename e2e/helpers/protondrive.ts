@@ -6,8 +6,8 @@ import { loadDotEnvE2e } from "./env";
 
 /**
  * The Proton module's secrets (session tokens plus the user-key password, sealed under a
- * client key Proton holds for the session) as a gitignored JSON file, rewritten whenever
- * the module saves a secret.
+ * client key Proton holds for the session unless Proton refused one) as a gitignored JSON
+ * file, rewritten whenever the module saves a secret.
  */
 export function protonSecretsPath(): string {
 	loadDotEnvE2e();
