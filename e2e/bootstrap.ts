@@ -9,6 +9,7 @@ import { loadDotEnvE2e } from "./helpers/env";
 import { announceAuthorizeUrl, loopbackPort, startLoopback, writeEnvE2e } from "./helpers/loopback";
 import { protonDriveModule } from "../src/backends/protondrive/module";
 import { protonRuntimeContext, protonSecretsPath } from "./helpers/protondrive";
+import { SESSION_SECRET_KEY } from "../src/backends/protondrive/session";
 
 /**
  * One-time helper to mint a refresh token for the e2e suite (ADR 0003) WITHOUT a
@@ -116,14 +117,20 @@ async function bootstrapOnedrive(): Promise<void> {
 async function bootstrapProtondrive(): Promise<void> {
 	stdout.write(
 		"⚠ Use a throwaway Proton account. The secrets file this writes holds a live session with full\n" +
-			"  account access (its key password is sealed, but the tokens work until revoked). Keep it out of\n" +
-			"  backups and delete it when done; revoke the session in account.proton.me if it ever leaks.\n\n",
+			"  account access (the tokens work until revoked; how the key password is stored is reported\n" +
+			"  below). Keep it out of backups and delete it when done; revoke the session in\n" +
+			"  account.proton.me if it ever leaks.\n\n",
 	);
 	const context = protonRuntimeContext();
 	await protonDriveModule.auth.start(context, {});
 	stdout.write("Waiting for the sign-in to finish (up to 10 minutes)...\n");
 	await protonDriveModule.auth.complete(context, "", {});
+	const stored = await context.secrets.get(SESSION_SECRET_KEY);
+	const sealed = stored !== null && (JSON.parse(stored) as { sealedKeyPassword?: unknown }).sealedKeyPassword !== undefined;
 	stdout.write(`\n✓ Proton Drive session written to ${protonSecretsPath()}\n`);
+	stdout.write(sealed
+		? "  The key password is sealed under a key Proton holds for this session.\n"
+		: "  ⚠ Proton refused a local key: the key password is stored UNSEALED in that file.\n");
 }
 
 async function main(): Promise<void> {
