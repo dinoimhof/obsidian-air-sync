@@ -11,7 +11,7 @@ vi.mock("obsidian");
 
 // A secret store that satisfies every module's token lookup, so each provider's
 // `isConnected`/`prepare` can build its managed FS.
-const PROTON_SESSION = JSON.stringify({ uid: "UID", accessToken: "AT", refreshToken: "RT", keyPassword: "KP" });
+const PROTON_SESSION = JSON.stringify({ uid: "UID", accessToken: "AT", refreshToken: "RT", keyPassword: "KP", keyPasswordAtRest: "plaintext" });
 const connectedSecretStore: ISecretStore = {
 	getSecret: (id: string) =>
 		id.includes("session") ? PROTON_SESSION : id.includes("refresh") ? "RT" : id.includes("access") ? "AT" : null,

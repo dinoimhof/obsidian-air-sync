@@ -27,7 +27,7 @@ describe("Proton Drive connection lifetime", () => {
 			set: (key: string, value: string) => Promise.resolve(void values.set(key, value)),
 			delete: (key: string) => Promise.resolve(void values.delete(key)),
 		};
-		values.set(SESSION_SECRET_KEY, JSON.stringify({ uid: "UID", accessToken: "AT", refreshToken: "RT", keyPassword: "KP" }));
+		values.set(SESSION_SECRET_KEY, JSON.stringify({ uid: "UID", accessToken: "AT", refreshToken: "RT", keyPassword: "KP", keyPasswordAtRest: "plaintext" }));
 		const quiet = () => undefined;
 		return {
 			http: { request: () => Promise.reject(new Error("no request expected")) },
@@ -53,7 +53,7 @@ describe("Proton Drive connection lifetime", () => {
 		const context = contextWithSession();
 		await context.secrets.delete(SESSION_SECRET_KEY);
 		await expect(openProtonDrive(context, "client" as ClientUid)).rejects.toMatchObject({ kind: "auth" });
-		await context.secrets.set(SESSION_SECRET_KEY, JSON.stringify({ uid: "UID", accessToken: "AT", refreshToken: "RT", keyPassword: "KP" }));
+		await context.secrets.set(SESSION_SECRET_KEY, JSON.stringify({ uid: "UID", accessToken: "AT", refreshToken: "RT", keyPassword: "KP", keyPasswordAtRest: "plaintext" }));
 		await expect(openProtonDrive(context, "client" as ClientUid)).resolves.toBeDefined();
 	});
 

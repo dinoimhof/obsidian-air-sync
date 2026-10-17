@@ -24,6 +24,7 @@ import type { ClientUid } from "./sdk-client";
 import { openProtonDrive, releaseProtonDrive } from "./sdk-client";
 import { SESSION_SECRET_KEY, SessionHandle, saveSession } from "./session";
 import { ProtonTransport } from "./transport";
+import { sealKeyPassword } from "./local-key";
 import { scrubbingLogger } from "./redact";
 
 function clientUidOf(config: Readonly<JsonObject>): ClientUid {
@@ -47,7 +48,10 @@ const auth: BackendAuth = {
 			now: () => Date.now(),
 			sleep,
 		});
-		await saveSession(context.secrets, session);
+		// Register a local key for the new session and keep only the sealed key password.
+		const handle = SessionHandle.forSignIn(context.secrets, session);
+		const atRest = await sealKeyPassword(new ProtonTransport(context.http, handle), session.uid, session.keyPassword, scrubbingLogger(context.logger));
+		await saveSession(context.secrets, { ...handle.tokens, ...atRest });
 		const clientUid = clientUidOf(config);
 		const folderPath = configuredFolderPath(config);
 		const set: JsonObject = { clientUid };

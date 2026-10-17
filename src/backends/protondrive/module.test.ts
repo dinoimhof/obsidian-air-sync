@@ -6,7 +6,9 @@ import { protonDriveModule } from "./module";
 import { ProtonDriveAdapter } from "./adapter";
 import { openProtonDrive, releaseProtonDrive, type ProtonConnection } from "./sdk-client";
 import type { ProtonSession } from "./session";
-import { SESSION_SECRET_KEY } from "./session";
+import { SESSION_SECRET_KEY, SessionHandle } from "./session";
+import { keyPasswordOf } from "./local-key";
+import { ProtonTransport } from "./transport";
 
 vi.mock("./sdk-client", () => ({ openProtonDrive: vi.fn(), releaseProtonDrive: vi.fn(() => Promise.resolve()) }));
 vi.mock("./fork-login", async (original) => ({ ...(await original<object>()), completeFork: vi.fn() }));
@@ -106,6 +108,9 @@ describe("protondrive binding.resolveDefault", () => {
 describe("protondrive auth.complete", () => {
 	const session = { uid: "UID", accessToken: "AT", refreshToken: "RT", keyPassword: "KP" } as unknown as ProtonSession;
 
+	/** Proton's answer to the local-key registration, and the key it was given. */
+	const localKey = { status: 200, registered: "" };
+
 	function signInContext(): { context: BackendRuntimeContext; secrets: Map<string, string>; logged: string[] } {
 		const secrets = new Map<string, string>();
 		const store: BackendSecretStore = {
@@ -117,7 +122,22 @@ describe("protondrive auth.complete", () => {
 		// Record the context too: the failure text travels there, not in the message.
 		const log = (message: string, logContext?: Record<string, unknown>) => void logged.push(JSON.stringify([message, logContext]));
 		const context = {
-			http: { request: () => Promise.reject(new Error("no request expected")) },
+			http: {
+				request: (request: { url: string; method?: string; body?: unknown }) => {
+					if (!request.url.endsWith("/auth/v4/sessions/local/key") || request.method !== "PUT") {
+						return Promise.reject(new Error("no request expected"));
+					}
+					localKey.registered = (JSON.parse(String(request.body)) as { Key: string }).Key;
+					const body = localKey.status === 200 ? { Code: 1000 } : { Code: 2001 };
+					return Promise.resolve({
+						status: localKey.status,
+						headers: {},
+						text: () => Promise.resolve(JSON.stringify(body)),
+						arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+						json: () => Promise.resolve(body),
+					});
+				},
+			},
 			secrets: store,
 			logger: { debug: log, info: log, warn: log, error: log },
 			auth: { openExternal: () => Promise.resolve() },
@@ -126,6 +146,9 @@ describe("protondrive auth.complete", () => {
 	}
 
 	beforeEach(() => {
+		localKey.status = 200;
+		localKey.registered = "";
+		vi.stubGlobal("window", { setTimeout, clearTimeout });
 		vi.mocked(completeFork).mockResolvedValue(session);
 		vi.mocked(openProtonDrive).mockClear();
 	});
@@ -221,7 +244,7 @@ describe("protondrive auth.revoke", () => {
 
 	it("still drops the pending sign-in and releases the keys when the provider revoke fails", async () => {
 		const { context, secrets } = revokeContext(() => Promise.reject(new Error("offline")));
-		secrets.set(SESSION_SECRET_KEY, JSON.stringify({ uid: "UID", accessToken: "AT", refreshToken: "RT", keyPassword: "KP" }));
+		secrets.set(SESSION_SECRET_KEY, JSON.stringify({ uid: "UID", accessToken: "AT", refreshToken: "RT", sealedKeyPassword: "sealed" }));
 
 		await expect(protonDriveModule.auth.revoke?.(context, {})).rejects.toThrow();
 
@@ -294,5 +317,101 @@ describe("protondrive auth.start", () => {
 		expect(new URL(opened[0]!).origin).toBe("https://account.proton.me");
 		expect(patch.set?.pendingAuthState).toEqual(expect.any(String));
 		expect(values.has(FORK_SECRET_KEY)).toBe(true);
+	});
+});
+
+describe("protondrive local key", () => {
+	const fork = { uid: "UID", accessToken: "AT", refreshToken: "RT", keyPassword: "the-key-password" } as unknown as ProtonSession;
+
+	function store(values: Map<string, string>): BackendSecretStore {
+		return {
+			get: (key) => Promise.resolve(values.get(key) ?? null),
+			set: (key, value) => Promise.resolve(void values.set(key, value)),
+			delete: (key) => Promise.resolve(void values.delete(key)),
+		};
+	}
+
+	function answer(status: number, body: Record<string, unknown>) {
+		return Promise.resolve({
+			status,
+			headers: {},
+			text: () => Promise.resolve(JSON.stringify(body)),
+			arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+			json: () => Promise.resolve(body),
+		});
+	}
+
+	/** A Proton that holds one local key per session, as auth/v4/sessions/local/key does. */
+	function proton(put: { status: number } = { status: 200 }) {
+		let held: string | null = null;
+		const request = (r: { url: string; method?: string; body?: unknown }) => {
+			if (r.url.endsWith("/auth/v4/sessions/local/key") && r.method === "PUT") {
+				if (put.status !== 200) return answer(put.status, { Code: 2001 });
+				held = (JSON.parse(String(r.body)) as { Key: string }).Key;
+				return answer(200, { Code: 1000 });
+			}
+			if (r.url.endsWith("/auth/v4/sessions/local/key")) return held ? answer(200, { Code: 1000, ClientKey: held }) : answer(401, { Code: 401 });
+			if (r.url.endsWith("/auth/v4/refresh")) return answer(401, { Code: 401 });
+			return Promise.reject(new Error(`unexpected ${r.url}`));
+		};
+		return { request, revoke: () => void (held = null) };
+	}
+
+	async function signIn(http: { request: unknown }, values: Map<string, string>, logged: string[] = []) {
+		vi.stubGlobal("window", { setTimeout, clearTimeout });
+		vi.mocked(completeFork).mockResolvedValue(fork);
+		const log = (message: string) => void logged.push(message);
+		const context = {
+			http,
+			secrets: store(values),
+			logger: { debug: log, info: log, warn: log, error: log },
+			auth: { openExternal: () => Promise.resolve() },
+		} as unknown as BackendRuntimeContext;
+		await protonDriveModule.auth.complete(context, "", { pendingAuthState: "1" });
+		return context;
+	}
+
+	it("local key: sign-in stores only the sealed key password, which Proton's key unlocks", async () => {
+		const values = new Map<string, string>();
+		const server = proton();
+		await signIn(server, values);
+
+		const raw = values.get(SESSION_SECRET_KEY) ?? "";
+		expect(raw).not.toContain("the-key-password");
+		expect(JSON.parse(raw)).toMatchObject({ uid: "UID", sealedKeyPassword: expect.any(String) as unknown });
+
+		const handle = await SessionHandle.open(store(values));
+		await expect(keyPasswordOf(new ProtonTransport(server as never, handle), handle.current)).resolves.toBe("the-key-password");
+	});
+
+	it("local key: a revoked session cannot unlock the stored key password and asks to reconnect", async () => {
+		const values = new Map<string, string>();
+		const server = proton();
+		await signIn(server, values);
+		server.revoke();
+
+		const handle = await SessionHandle.open(store(values));
+		await expect(keyPasswordOf(new ProtonTransport(server as never, handle), handle.current)).rejects.toMatchObject({ kind: "auth" });
+	});
+
+	it("local key: a blob sealed for another session does not decrypt", async () => {
+		const values = new Map<string, string>();
+		const server = proton();
+		await signIn(server, values);
+		const stored = JSON.parse(values.get(SESSION_SECRET_KEY) ?? "{}") as Record<string, string>;
+		values.set(SESSION_SECRET_KEY, JSON.stringify({ ...stored, uid: "OTHER" }));
+
+		const handle = await SessionHandle.open(store(values));
+		await expect(keyPasswordOf(new ProtonTransport(server as never, handle), handle.current)).rejects.toMatchObject({ kind: "auth" });
+	});
+
+	it("local key: falls back to a marked plaintext key password when Proton refuses, warning once without values", async () => {
+		const values = new Map<string, string>();
+		const logged: string[] = [];
+		await signIn(proton({ status: 422 }), values, logged);
+
+		expect(JSON.parse(values.get(SESSION_SECRET_KEY) ?? "{}")).toMatchObject({ keyPassword: "the-key-password", keyPasswordAtRest: "plaintext" });
+		expect(logged.filter((line) => line.includes("refused a local key"))).toHaveLength(1);
+		expect(logged.join("\n")).not.toContain("the-key-password");
 	});
 });

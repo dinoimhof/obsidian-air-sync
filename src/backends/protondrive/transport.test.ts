@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { BackendHttpClient, BackendHttpRequest, JsonValue } from "../../backend-api";
 import { ProtonApiError, ProtonTransport, retryAfterMsFrom } from "./transport";
-import type { ProtonSession } from "./session";
+import type { StoredSession } from "./session";
 import { SessionHandle, saveSession } from "./session";
 
 beforeAll(() => {
@@ -71,7 +71,7 @@ describe("ProtonTransport host allowlist", () => {
 			set: (key: string, value: string) => Promise.resolve(void values.set(key, value)),
 			delete: (key: string) => Promise.resolve(void values.delete(key)),
 		};
-		await saveSession(secrets, { uid: "UID", accessToken: "AT", refreshToken: "RT", keyPassword: "KP" } as ProtonSession);
+		await saveSession(secrets, { uid: "UID", accessToken: "AT", refreshToken: "RT", sealedKeyPassword: "sealed" } as StoredSession);
 		const requests: BackendHttpRequest[] = [];
 		const http: BackendHttpClient = {
 			request: (request) => {
@@ -124,7 +124,7 @@ describe("ProtonTransport host allowlist", () => {
 			set: (key: string, value: string) => Promise.resolve(void values.set(key, value)),
 			delete: (key: string) => Promise.resolve(void values.delete(key)),
 		};
-		await saveSession(secrets, { uid: "UID", accessToken: "AT", refreshToken: "RT", keyPassword: "KP" } as ProtonSession);
+		await saveSession(secrets, { uid: "UID", accessToken: "AT", refreshToken: "RT", sealedKeyPassword: "sealed" } as StoredSession);
 		const requests: BackendHttpRequest[] = [];
 		const http: BackendHttpClient = {
 			request: (request) => {
@@ -183,7 +183,7 @@ describe("Retry-After on the session refresh", () => {
 			set: (key: string, value: string) => Promise.resolve(void values.set(key, value)),
 			delete: (key: string) => Promise.resolve(void values.delete(key)),
 		};
-		await saveSession(secrets, { uid: "UID", accessToken: "AT", refreshToken: "RT", keyPassword: "KP" } as ProtonSession);
+		await saveSession(secrets, { uid: "UID", accessToken: "AT", refreshToken: "RT", sealedKeyPassword: "sealed" } as StoredSession);
 		const http: BackendHttpClient = {
 			request: (request) =>
 				Promise.resolve(
@@ -201,5 +201,27 @@ describe("Retry-After on the session refresh", () => {
 
 	it("carries the hint on a refresh that fails with 503", async () => {
 		expect(await refreshAnswering(503)).toMatchObject({ kind: "transient", retryAfterMs: 4000 });
+	});
+});
+
+describe("session routes and refresh", () => {
+	it("refreshes on a 401 from an authenticated session route such as the local key", async () => {
+		const values = new Map<string, string>();
+		const secrets = {
+			get: (key: string) => Promise.resolve(values.get(key) ?? null),
+			set: (key: string, value: string) => Promise.resolve(void values.set(key, value)),
+			delete: (key: string) => Promise.resolve(void values.delete(key)),
+		};
+		await saveSession(secrets, { uid: "UID", accessToken: "AT", refreshToken: "RT", sealedKeyPassword: "sealed" } as StoredSession);
+		const paths: string[] = [];
+		const http: BackendHttpClient = {
+			request: (request) => {
+				paths.push(new URL(request.url).pathname);
+				if (request.url.endsWith("/auth/v4/refresh")) return Promise.resolve(reply(200, { Code: 1000, UID: "UID", AccessToken: "AT2", RefreshToken: "RT2" }));
+				return Promise.resolve(reply(request.headers?.authorization === "Bearer AT2" ? 200 : 401, { Code: 1000, ClientKey: "k" }));
+			},
+		};
+		await new ProtonTransport(http, await SessionHandle.open(secrets)).json("GET", "auth/v4/sessions/local/key");
+		expect(paths).toEqual(["/auth/v4/sessions/local/key", "/auth/v4/refresh", "/auth/v4/sessions/local/key"]);
 	});
 });

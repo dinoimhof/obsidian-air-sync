@@ -120,10 +120,14 @@ function isApiHost(url: string): boolean {
 	return new URL(url).hostname.toLowerCase() === PROTON_API_HOST;
 }
 
-/** Proton's own auth routes, which a 401 must not recurse into. */
+/**
+ * Proton's own auth routes, which a 401 must not recurse into: the refresh itself, and the
+ * session-fork routes a sign-in uses before it has a session. Authenticated session routes
+ * (e.g. the local key) refresh like any other call.
+ */
 function isAuthRoute(url: string): boolean {
 	const path = new URL(url).pathname.toLowerCase();
-	return path.startsWith("/auth/v4/refresh") || path.startsWith("/auth/v4/sessions") || path.startsWith("/core/v4/auth");
+	return path.startsWith("/auth/v4/refresh") || path.startsWith("/auth/v4/sessions/forks") || path.startsWith("/core/v4/auth");
 }
 
 function jsonCode(body: JsonValue): number | undefined {

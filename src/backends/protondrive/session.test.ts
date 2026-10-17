@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BackendSecretStore } from "../../backend-api";
-import type { ProtonSession, SessionTokens } from "./session";
+import type { SessionTokens, StoredSession } from "./session";
+import { SESSION_SECRET_KEY } from "./session";
 import { SessionHandle, loadSession, parseSessionTokens, saveSession } from "./session";
 
 function memorySecrets(): BackendSecretStore {
@@ -18,15 +19,14 @@ function memorySecrets(): BackendSecretStore {
 	};
 }
 
-function session(generation: number): ProtonSession {
-	const tokens = parseSessionTokens({ UID: "uid", AccessToken: `at-${generation}`, RefreshToken: `rt-${generation}` });
-	if (!tokens) throw new Error("fixture");
-	return { ...tokens, keyPassword: "kp" as ProtonSession["keyPassword"] };
+function tokens(generation: number): SessionTokens {
+	const parsed = parseSessionTokens({ UID: "uid", AccessToken: `at-${generation}`, RefreshToken: `rt-${generation}` });
+	if (!parsed) throw new Error("fixture");
+	return parsed;
 }
 
-function tokens(generation: number): SessionTokens {
-	const { keyPassword: _unused, ...rest } = session(generation);
-	return rest;
+function session(generation: number): StoredSession {
+	return { ...tokens(generation), sealedKeyPassword: "sealed-blob" };
 }
 
 describe("SessionHandle.refresh", () => {
@@ -69,5 +69,39 @@ describe("SessionHandle.refresh", () => {
 
 	it("refuses to open without a stored session", async () => {
 		await expect(SessionHandle.open(memorySecrets())).rejects.toMatchObject({ kind: "auth" });
+	});
+});
+
+describe("stored session shape (local key)", () => {
+	it("local key: keeps the sealed key password across a refresh and never a plaintext one", async () => {
+		const secrets = memorySecrets();
+		await saveSession(secrets, session(1));
+		const handle = await SessionHandle.open(secrets);
+		await handle.refresh(session(1).accessToken, () => Promise.resolve(tokens(2)));
+		const raw = await secrets.get(SESSION_SECRET_KEY);
+		expect(JSON.parse(raw ?? "{}")).toEqual({ uid: "uid", accessToken: "at-2", refreshToken: "rt-2", sealedKeyPassword: "sealed-blob" });
+		expect(raw).not.toContain("keyPassword\"");
+	});
+
+	it("local key: treats an unmarked plaintext key password (the old shape) as no session", async () => {
+		const secrets = memorySecrets();
+		await secrets.set(SESSION_SECRET_KEY, JSON.stringify({ uid: "uid", accessToken: "at", refreshToken: "rt", keyPassword: "kp" }));
+		expect(await loadSession(secrets)).toBeNull();
+		await expect(SessionHandle.open(secrets)).rejects.toMatchObject({ kind: "auth" });
+	});
+
+	it("local key: accepts the explicitly marked plaintext fallback", async () => {
+		const secrets = memorySecrets();
+		const fallback = { uid: "uid", accessToken: "at", refreshToken: "rt", keyPassword: "kp", keyPasswordAtRest: "plaintext" };
+		await secrets.set(SESSION_SECRET_KEY, JSON.stringify(fallback));
+		expect(await loadSession(secrets)).toEqual(fallback);
+	});
+
+	it("local key: a sign-in handle refreshes in memory only", async () => {
+		const secrets = memorySecrets();
+		const handle = SessionHandle.forSignIn(secrets, tokens(1));
+		await handle.refresh(tokens(1).accessToken, () => Promise.resolve(tokens(2)));
+		expect(handle.tokens.accessToken).toBe("at-2");
+		expect(await secrets.get(SESSION_SECRET_KEY)).toBeNull();
 	});
 });

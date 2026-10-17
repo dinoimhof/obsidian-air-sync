@@ -14,6 +14,7 @@ import type { ProtonDriveApi } from "./drive-api";
 import { SdkDriveApi } from "./sdk-drive-api";
 import { SessionHandle } from "./session";
 import { ProtonTransport } from "./transport";
+import { keyPasswordOf } from "./local-key";
 import { scrubbingLogger } from "./redact";
 
 declare const clientUidBrand: unique symbol;
@@ -119,8 +120,9 @@ export async function releaseProtonDrive(context?: BackendRuntimeContext): Promi
 async function connect(context: BackendRuntimeContext, clientUid: ClientUid): Promise<ProtonConnection> {
 	const started = releases;
 	const session = await SessionHandle.open(context.secrets);
-	if (releases !== started || revoked.has(context)) failBackend("auth", "Proton Drive was disconnected while connecting");
 	const transport = new ProtonTransport(context.http, session);
+	const keyPassword = await keyPasswordOf(transport, session.current);
+	if (releases !== started || revoked.has(context)) failBackend("auth", "Proton Drive was disconnected while connecting");
 	ensureCryptoEndpoint();
 	const client = new ProtonDriveClient({
 		httpClient: {
@@ -129,7 +131,7 @@ async function connect(context: BackendRuntimeContext, clientUid: ClientUid): Pr
 		},
 		entitiesCache: new NullCache(),
 		cryptoCache: new MemoryCache(),
-		account: new ProtonAccount(transport, CryptoProxy, session.current.keyPassword),
+		account: new ProtonAccount(transport, CryptoProxy, keyPassword),
 		openPGPCryptoModule: new OpenPGPCryptoWithCryptoProxy(CryptoProxy),
 		srpModule: srpModule(transport),
 		config: { baseUrl: PROTON_API_HOST, clientUid },
