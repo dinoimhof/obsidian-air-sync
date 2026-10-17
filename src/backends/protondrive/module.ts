@@ -19,9 +19,9 @@ import { ProtonDriveAdapter } from "./adapter";
 import { PROTON_MODULE_VERSION } from "./constants";
 import type { DriveNode, NodeUid } from "./drive-api";
 import { findOrCreateFolderPath, listMyFilesFolders, parseFolderPath } from "./folder-path";
-import { beginFork, completeFork } from "./fork-login";
+import { FORK_SECRET_KEY, beginFork, completeFork } from "./fork-login";
 import type { ClientUid } from "./sdk-client";
-import { openProtonDrive } from "./sdk-client";
+import { openProtonDrive, releaseProtonDrive } from "./sdk-client";
 import { SESSION_SECRET_KEY, SessionHandle, saveSession } from "./session";
 import { ProtonTransport } from "./transport";
 import { scrubbingLogger } from "./redact";
@@ -66,9 +66,15 @@ const auth: BackendAuth = {
 		return { set, unset: ["pendingAuthState"] };
 	},
 	revoke: async (context) => {
-		const session = await SessionHandle.open(context.secrets).catch(() => null);
-		if (!session) return;
-		await new ProtonTransport(context.http, session).json("DELETE", "auth/v4");
+		try {
+			const session = await SessionHandle.open(context.secrets).catch(() => null);
+			if (session) await new ProtonTransport(context.http, session).json("DELETE", "auth/v4");
+		} finally {
+			// Whatever the provider answered: no half-finished sign-in and no decrypted key
+			// survives a disconnect.
+			await context.secrets.delete(FORK_SECRET_KEY);
+			await releaseProtonDrive();
+		}
 	},
 };
 

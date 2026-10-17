@@ -79,7 +79,39 @@ export interface ProtonConnection {
  * The entity cache is a `NullCache` so every node read is current; the crypto
  * cache holds only decrypted keys, which do not change for a node.
  */
-export async function openProtonDrive(context: BackendRuntimeContext, clientUid: ClientUid): Promise<ProtonConnection> {
+/**
+ * One connection per runtime context (core builds one per connection generation), so the
+ * user keys are decrypted and imported once per connection instead of once per call. Keyed
+ * weakly: a context core drops takes its connection with it.
+ */
+let connections = new WeakMap<BackendRuntimeContext, Map<string, Promise<ProtonConnection>>>();
+
+export function openProtonDrive(context: BackendRuntimeContext, clientUid: ClientUid): Promise<ProtonConnection> {
+	let byClient = connections.get(context);
+	if (!byClient) {
+		byClient = new Map();
+		connections.set(context, byClient);
+	}
+	const cached = byClient.get(clientUid);
+	if (cached) return cached;
+	const opening = connect(context, clientUid);
+	byClient.set(clientUid, opening);
+	opening.catch(() => byClient.delete(clientUid));
+	return opening;
+}
+
+/**
+ * Forget every connection and release the crypto endpoint, which clears its key store:
+ * no decrypted private key outlives a disconnect. The next connection sets it up again.
+ */
+export async function releaseProtonDrive(): Promise<void> {
+	connections = new WeakMap();
+	if (!cryptoEndpointSet) return;
+	cryptoEndpointSet = false;
+	await CryptoProxy.releaseEndpoint();
+}
+
+async function connect(context: BackendRuntimeContext, clientUid: ClientUid): Promise<ProtonConnection> {
 	const session = await SessionHandle.open(context.secrets);
 	const transport = new ProtonTransport(context.http, session);
 	ensureCryptoEndpoint();

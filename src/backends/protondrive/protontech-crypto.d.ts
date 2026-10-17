@@ -42,6 +42,8 @@ export interface CryptoApiInterface {
 
 export declare const CryptoProxy: CryptoApiInterface & {
 	setEndpoint<T extends CryptoApiInterface>(endpoint: T, onRelease?: (endpoint: T) => Promise<void>): void;
+	/** Calls the `onRelease` passed to `setEndpoint` (here: clear the key store). */
+	releaseEndpoint(): Promise<void>;
 };
 
 /** `@protontech/crypto/proxy/endpoint/api.ts`: the in-thread endpoint. */

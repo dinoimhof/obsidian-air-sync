@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BackendRuntimeContext, BackendSecretStore } from "../../backend-api";
 import type { DriveNode, NodeUid, ProtonDriveApi } from "./drive-api";
-import { completeFork } from "./fork-login";
+import { FORK_SECRET_KEY, completeFork } from "./fork-login";
 import { protonDriveModule } from "./module";
-import { openProtonDrive, type ProtonConnection } from "./sdk-client";
+import { openProtonDrive, releaseProtonDrive, type ProtonConnection } from "./sdk-client";
 import type { ProtonSession } from "./session";
 import { SESSION_SECRET_KEY } from "./session";
 
-vi.mock("./sdk-client", () => ({ openProtonDrive: vi.fn() }));
+vi.mock("./sdk-client", () => ({ openProtonDrive: vi.fn(), releaseProtonDrive: vi.fn(() => Promise.resolve()) }));
 vi.mock("./fork-login", async (original) => ({ ...(await original<object>()), completeFork: vi.fn() }));
 
 const MY_FILES = "vol~myfiles" as NodeUid;
@@ -182,5 +182,49 @@ describe("protondrive binding.listAppRootFolders", () => {
 		tree.add("vol~archive", MY_FILES, "archive");
 
 		expect(await protonDriveModule.binding.listAppRootFolders!(context, {})).toEqual(["archive", "notes"]);
+	});
+});
+
+describe("protondrive auth.revoke", () => {
+	function revokeContext(request: () => Promise<never>): { context: BackendRuntimeContext; secrets: Map<string, string> } {
+		const secrets = new Map<string, string>([[FORK_SECRET_KEY, "{}"]]);
+		const store: BackendSecretStore = {
+			get: (key) => Promise.resolve(secrets.get(key) ?? null),
+			set: (key, value) => Promise.resolve(void secrets.set(key, value)),
+			delete: (key) => Promise.resolve(void secrets.delete(key)),
+		};
+		const quiet = () => undefined;
+		const context = {
+			http: { request },
+			secrets: store,
+			logger: { debug: quiet, info: quiet, warn: quiet, error: quiet },
+			auth: { openExternal: () => Promise.resolve() },
+		} as BackendRuntimeContext;
+		return { context, secrets };
+	}
+
+	beforeEach(() => {
+		vi.mocked(releaseProtonDrive).mockClear();
+		// The transport times requests with window timers, as inside Obsidian.
+		vi.stubGlobal("window", { setTimeout, clearTimeout });
+	});
+
+	it("drops a pending sign-in and releases the keys without a session", async () => {
+		const { context, secrets } = revokeContext(() => Promise.reject(new Error("no request expected")));
+
+		await protonDriveModule.auth.revoke?.(context, {});
+
+		expect(secrets.has(FORK_SECRET_KEY)).toBe(false);
+		expect(releaseProtonDrive).toHaveBeenCalledTimes(1);
+	});
+
+	it("still drops the pending sign-in and releases the keys when the provider revoke fails", async () => {
+		const { context, secrets } = revokeContext(() => Promise.reject(new Error("offline")));
+		secrets.set(SESSION_SECRET_KEY, JSON.stringify({ uid: "UID", accessToken: "AT", refreshToken: "RT", keyPassword: "KP" }));
+
+		await expect(protonDriveModule.auth.revoke?.(context, {})).rejects.toThrow();
+
+		expect(secrets.has(FORK_SECRET_KEY)).toBe(false);
+		expect(releaseProtonDrive).toHaveBeenCalledTimes(1);
 	});
 });

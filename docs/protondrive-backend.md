@@ -31,7 +31,8 @@ Proton cannot redirect back to Obsidian, so the module declares `auth.completion
 
 - **Stored secret**: one SecretStorage entry (`session`) holding the session UID, access token, refresh token and the **user-key password**. The key password decrypts the account's private keys, which Drive needs for every name and file. It is as sensitive as the account password for Proton data.
 - **Refresh**: on a 401 from the API host the transport refreshes once and replays the request. A 401 from a storage host is about that request's block token, so it never refreshes the session. Refresh is single-flight per connection and re-reads SecretStorage first, because another connection of the module (binding, a rebuilt adapter) may already have rotated the refresh token, and Proton rejects a replayed one.
-- **Disconnect**: revokes the session (`DELETE auth/v4`), then core clears the secret.
+- **Disconnect**: revokes the session (`DELETE auth/v4`), then core clears the secret. Whatever the provider answers, the revoke also deletes a pending sign-in (`pending-fork`) and releases the crypto endpoint, which clears its key store, so no decrypted private key outlives a disconnect.
+- **Key lifetime**: one SDK client and account per runtime context (one per connection generation, held weakly), so the user and address keys are decrypted and imported once per connection, not once per adapter, binding or display-path call. Keys of a plugin that is unloaded without a disconnect stay in memory until Obsidian reloads; releasing them on unload needs a core dispose hook for adapters.
 - **Client identity**: requests carry `x-pm-appversion: external-drive-air_sync@<module version>-alpha`, the shape Proton requires of third-party clients. A random `clientUid` in backend data marks this install's upload drafts, so the SDK may delete its own abandoned drafts.
 
 ## Adapter
