@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { translateProtonError } from "./errors";
 import { ProtonApiError } from "./transport";
+import { backendError } from "../../backend-api";
+import { toBackendError } from "../shared/error-shape";
 
 function sdkError(name: string, message: string, fields: Record<string, unknown> = {}): Error {
 	return Object.assign(new Error(message), { name }, fields);
@@ -40,5 +42,21 @@ describe("translateProtonError for provider-side change", () => {
 	it("carries a bounded retry hint from Retry-After on 429 and 503", () => {
 		expect(translateProtonError(new ProtonApiError(429, 2028, "x", 7000))).toMatchObject({ kind: "rate_limit", retryAfterMs: 7000 });
 		expect(translateProtonError(new ProtonApiError(503, undefined, "x", 2000))).toMatchObject({ kind: "transient", retryAfterMs: 2000 });
+	});
+});
+
+describe("translateProtonError for an SDK-wrapped classified cause", () => {
+	it("returns the auth cause the SDK batched into ProtonDriveError, not transient", () => {
+		const auth = toBackendError(backendError("auth", "Reconnect Proton Drive"));
+		const wrapped = Object.assign(new Error("Some items could not be loaded"), {
+			name: "ProtonDriveError",
+			cause: [new Error("plain"), toBackendError(backendError("rate_limit", "slow", { retryAfterMs: 1000 })), auth],
+		});
+		expect(translateProtonError(wrapped)).toMatchObject({ kind: "auth" });
+	});
+
+	it("keeps a classified single cause and its retry hint", () => {
+		const wrapped = Object.assign(new Error("wrapped"), { cause: toBackendError(backendError("rate_limit", "slow", { retryAfterMs: 1000 })) });
+		expect(translateProtonError(wrapped)).toMatchObject({ kind: "rate_limit", retryAfterMs: 1000 });
 	});
 });

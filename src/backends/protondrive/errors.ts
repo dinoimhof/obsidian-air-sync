@@ -45,8 +45,30 @@ function fromCode(code: number | undefined, message: string): BackendErrorShape 
 }
 
 /** SDK errors are matched by `name`, so this file does not load the SDK runtime. */
+/** Severity order for a classified error the SDK wrapped as a cause: the one to act on first. */
+const CAUSE_PRECEDENCE: readonly BackendErrorShape["kind"][] = ["auth", "permission", "permanent", "unverifiable", "rate_limit"];
+
+/**
+ * The SDK collects per-node failures (including a classified error our own account code
+ * threw) into `ProtonDriveError({ cause: errors })`. Return the most severe classified
+ * cause, so an auth error is not reduced to "transient" on paths that batch nodes.
+ */
+function classifiedCause(err: object): BackendErrorShape | null {
+	const raw = (err as { cause?: unknown }).cause;
+	const causes = (Array.isArray(raw) ? raw : [raw]).filter(isBackendErrorShape);
+	for (const kind of CAUSE_PRECEDENCE) {
+		const match = causes.find((cause) => cause.kind === kind);
+		if (match) return match;
+	}
+	return causes[0] ?? null;
+}
+
 export function translateProtonError(err: unknown): BackendErrorShape {
 	if (isBackendErrorShape(err)) return err;
+	if (typeof err === "object" && err !== null) {
+		const cause = classifiedCause(err);
+		if (cause) return cause;
+	}
 	// SDK messages are not ours to vet: scrub them before they become a logged message.
 	const message = err instanceof Error ? scrub(err.message) : "Proton Drive request failed";
 	if (err instanceof ProtonApiError) {
