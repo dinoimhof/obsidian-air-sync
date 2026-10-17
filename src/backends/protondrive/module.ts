@@ -32,7 +32,10 @@ import { scrubbingLogger } from "./redact";
  * loads: an install that never uses Proton Drive never evaluates them, so a runtime that
  * cannot run them breaks only this backend, never the others.
  */
-const sdkClient = () => import("./sdk-client");
+let sdkLoading: Promise<typeof import("./sdk-client")> | null = null;
+// Memoized: a bundler's lazy-init wrapper marks a module loaded before it finishes, so a
+// failed first load must keep its original error instead of yielding a half-initialised module.
+const sdkClient = (): Promise<typeof import("./sdk-client")> => (sdkLoading ??= import("./sdk-client"));
 
 async function openProtonDrive(context: BackendRuntimeContext, clientUid: ClientUid): Promise<ProtonConnection> {
 	return (await sdkClient()).openProtonDrive(context, clientUid);
