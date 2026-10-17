@@ -31,6 +31,7 @@ import type { JsonValue } from "../../backend-api";
 import type { KeyPassword } from "./session";
 import type { ProtonTransport } from "./transport";
 import { ProtonApiError } from "./transport";
+import { failBackend } from "../shared/error-shape";
 
 /** Core API codes for "no such address" / "address is external" on `core/v4/keys/all`. */
 const ADDRESS_NOT_FOUND_CODES: ReadonlySet<number> = new Set([33_102, 33_103]);
@@ -161,14 +162,25 @@ export class ProtonAccount implements ProtonDriveAccount {
 			privateKeys.push(privateKey);
 			publicKeys.push(await this.publicOf(privateKey));
 		}
-		if (privateKeys.length === 0) throw new Error("No Proton user key could be decrypted");
+		if (rawKeys.length === 0) failBackend("permanent", "The Proton account reported no user key");
+		// The API answered but no key opens with the stored key password: the Proton password
+		// (or mailbox password) changed. Only a new sign-in helps; nothing else may run.
+		if (privateKeys.length === 0) {
+			failBackend("auth", "Proton could not unlock the account keys with the stored key password (was the Proton password changed?). Reconnect Proton Drive.");
+		}
 		return { privateKeys, publicKeys };
 	}
 
 	private async decryptAddress(address: AddressDto): Promise<ProtonDriveAccountAddress> {
+		// Current address keys open through the user keys: load them first, so a changed
+		// password surfaces as the auth error below instead of being swallowed per key.
+		if (address.keys.some((key) => key.token)) await this.userKeys();
 		const settled = await Promise.allSettled(address.keys.map((key) => this.addressKey(key)));
 		const keys = settled.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
-		if (keys.length === 0) throw new Error("No key of one of the account's Proton addresses could be decrypted");
+		if (keys.length === 0) {
+			// Legacy keys open with the key password itself: none opening means it changed.
+			failBackend("auth", "Proton could not unlock an address key with the stored key password (was the Proton password changed?). Reconnect Proton Drive.");
+		}
 		return { email: address.email, addressId: address.id, primaryKeyIndex: 0, keys };
 	}
 
