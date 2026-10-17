@@ -118,6 +118,33 @@ carry a credential or personal data. There are two layers:
 
 Node uids stay in messages: they are opaque, and they are needed to diagnose a sync failure.
 
+## Security model
+
+**What is at stake.** A Proton Drive connection is a full session for the user's Proton account, not a Drive-only or folder-scoped grant. The key password unlocks every user and address key, so Mail and Calendar keys too. Leaking the session and the key password together is full account compromise, not a Drive leak.
+
+**What this module does about it:**
+
+| Risk | Mitigation |
+|---|---|
+| Copies of the stored secret (backups, other tools, the secret store read at rest) | The key password is sealed under a client key Proton holds for the session (see Authentication). A revoked session makes every copy useless. The unsealed form exists only after an explicit HTTP 403 from Proton, is marked, and is logged once. |
+| The session token reaching another host | The transport sends only to `https://` `proton.me` or a subdomain. It refuses userinfo, backslashes, whitespace and control characters, and it sends the normalized URL it validated. |
+| Credentials or personal data in `.airsync/logs/` | Sanitized routes, no free-text provider detail, no address or folder path in messages, and a scrubber at the logger boundary (emails, `Bearer` values, fork selectors, upload tokens, query strings, credential fields). |
+| Decrypted keys lingering in memory | One connection per runtime context. Disconnect releases the crypto endpoint, which clears its key store, and a revoked context never reconnects. |
+| Hostile or malformed remote names | A name that cannot be one path segment fails closed, and Air Sync never writes such a name. |
+| Bytes that disagree with their claimed SHA-1 | A version-bound read recomputes the SHA-1 and refuses a mismatch, after the SDK's signature checks. |
+| Proton changing the API, events or crypto | An unknown event type triggers a rescan, code 5003 is a permanent "update" error, an offline smoke test runs on every SDK bump, and pinned versions with a lockfile `npm ci` accepts. |
+
+**What it cannot fix (residual risks):**
+
+- **Obsidian's secret storage is shared by all plugins.** `app.secretStorage.listSecrets()` lists every secret, and any plugin can read `air-sync-protondrive-session-token`. Sealing makes that copy useless after revocation, but not while the session is live. Obsidian has no plugin sandbox: a malicious plugin running alongside Air Sync can use the live session, and on desktop it has Node. Install only plugins you trust when using Proton Drive.
+- **Uninstalling without Disconnect** leaves the session valid at Proton. Revoke it in your Proton account settings.
+- **Decrypted file names** are on the device: in the vault itself, in the IndexedDB metadata cache, and in debug logs. Do not share logs unredacted.
+- **`requestUrl` cannot be cancelled,** so a request that timed out may still complete and be retried. Whether `requestUrl` follows redirects with the session headers is unverified (tracked as an issue).
+- **Author signatures on names and keys** are not checked beyond what the SDK enforces. Content signatures are checked on download. Content written before 2024 can log legacy verification warnings, so failing closed on those would block old files.
+- **The E2E secrets file** holds a live session for the test account. Use a throwaway account.
+
+**Considered and rejected:** encrypting the session with a non-extractable WebCrypto key in IndexedDB (every plugin shares the origin and can use the key), and not persisting the key password at all (a sign-in on every launch). **Proposed for later, opt-in:** a passphrase lock (key derivation, then AES-GCM, unlocked once per launch) and a "don't remember this device" mode. Both need core support for an unlock prompt or an ephemeral secret store.
+
 ## Bundle and licensing
 
 `@protontech/crypto` (GPL-3.0) and Proton's OpenPGP.js fork (LGPL-3.0) are bundled into `main.js` with the SDK (MIT), about 770 KB minified of the 1.2 MB bundle. A build that includes this backend is therefore distributed under the GPL-3.0 terms of the combined work.
@@ -136,6 +163,47 @@ The SDK is pre-1.0, its README still says it is not ready for third-party produc
 4. **Run the gate**, which includes the polyfill guard and the module's unit and contract tests.
 5. **Run the live E2E** (`npm run test:e2e:protondrive`) on a throwaway account, then the manual live checklist.
 6. If the bundle grows new runtime pieces (the SDK's optional search WASM, workers), check that they stay out of `main.js` unless the module uses them.
+
+## Qualification worksheet
+
+Answers to the implementation contract's worksheet. "Live" marks an item still to confirm on a real account.
+
+| Item | Answer |
+|---|---|
+| Root scoping; empty vs missing root | The bound folder is a node uid under My files. `assertRootAlive` distinguishes not found, trashed and not-a-folder from an empty live folder. |
+| Stable identity, rename continuity, same-path replacement | The node uid (`<volume>~<link>`) survives rename and move. A new node at the same path gets a new uid. |
+| Exact and case-only rename/move collisions | Proton refuses a second node with the same name in a folder (`exclusiveCreate`). Move and rename are two calls, ordered so neither clashes, with both folders checked first. Case sensitivity of names is a live item. |
+| Complete listing and pagination | `listAll` walks one folder at a time, and each SDK iterator is drained completely or the call fails. |
+| Delta: scope, ordering, replay, reset, deletes, renames | Volume-wide events name touched nodes, which are re-read; order-independent. The cursor is the volume event id. `tree_refresh` and unknown types trigger a rescan; `tree_remove` is not found. A trashed or missing node is a delete. An unnamed node outside the root is a delete, and if its ancestry is unreadable the cycle fails closed. |
+| Checksum: field, no body download, algorithm, availability | The SHA-1 of the plaintext from the revision's encrypted, signed extended attributes (`claimedDigests.sha1`); no download needed. Air Sync always uploads with it and the SDK verifies it. Revisions from other clients without it carry no checksum and fail closed in core. Reads verify it. |
+| Non-byte-backed objects | Proton Docs and Sheets (`application/vnd.proton.*`), drafts, albums and photos are excluded. Nodes with decryption errors are projected without version or checksum (unverifiable). |
+| Version and mtime | The version token is the active revision uid, and `read` downloads exactly that revision. mtime is the claimed modification time (supplemental). |
+| Detached lookup by id and by path | `getById` through `iterateNodes`. `getByPath` lists each folder on the way and may report several occupants. |
+| Upload limits, chunking, fidelity | Handled by the SDK's block uploader with `expectedSize`/`expectedSha1`. Whole files are buffered in memory (a limit for very large attachments on mobile). |
+| Auth: scope, rotation, expiry, revocation | Session fork on `account.proton.me`; Air Sync never sees the password. The session is full account scope (live: confirm `Scopes`). Refresh is single-flight with rotation, revoked on Disconnect. The key password is sealed under a Proton-held local key. |
+| Regional hosts, logical error shapes | API host `drive-api.proton.me`. Storage hosts `*-storage.proton.me` (live). Codes mapped: 2500/2501/2011/9001/5003/quota. |
+| Rate limits, retry hints | The SDK backs off on 429/5xx itself. The module's calls carry `Retry-After` into `retryAfterMs`, which core caps. |
+| Mobile `requestUrl` | All traffic goes through `requestUrl`. A sign-in survives the app being suspended (the poll resumes on foreground). The bundle on a mobile WebView, crypto and polyfills included, is a live item. |
+
+## Manual live checklist
+
+Two behaviours seen in earlier live testing, so they are not mistaken for new bugs:
+- **Duplicates after an interrupted push.** A push that reached Proton but never committed its sync record (a crash or a failed post-write check) shows up as a remote-only file on the next full scan. Air Sync never deletes a file because a listing lacks it, so such a leftover is a one-time manual cleanup.
+- **The volume-wide event feed.** Unrelated activity elsewhere in My files still costs event reads, and an unknown event type costs a full rescan. That is correct, but it is the most likely source of extra traffic on a busy account.
+
+On a throwaway Proton account, after `npm run build` and installing the plugin into a test vault:
+
+1. **Connect:** sign in on `account.proton.me`, and on mobile background Obsidian while the poll runs. Air Sync connects on return.
+2. **Local key:** after sign-in, `session` in SecretStorage holds `sealedKeyPassword` and no `keyPassword`. No "refused a local key" warning appears in the logs.
+3. **Restart soak:** restart Obsidian several times, including once offline. Sync resumes without a new sign-in once online.
+4. **Sync round trip:** create, edit, rename, move (also into a folder that holds a sibling with the new name) and delete notes on both sides, and edit a note on Proton web.
+5. **Names:** a file named with a backslash or `..` on Proton web inside the vault folder blocks the cycle with an error naming it, and moving it out unblocks.
+6. **Legacy content:** files uploaded before 2024 or by other Proton clients either sync or fail closed visibly; they are never deleted.
+7. **Disconnect:** the session disappears from the account's session list, and `session`/`pending-fork` are gone from SecretStorage.
+8. **Password change:** change the Proton password. Air Sync asks to reconnect and deletes nothing. Note whether the old session was revoked.
+9. **Storage hosts:** in the logs, block transfers go only to `*.proton.me`. Note whether a storage request ever answers 401.
+10. **Rate limits and offline:** pull the network mid-sync; the cycle aborts cleanly and resumes.
+11. **Mobile:** repeat 1, 3 and 4 on iOS and Android.
 
 ## Verification
 

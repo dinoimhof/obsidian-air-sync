@@ -32,13 +32,14 @@ One row per directory; see the layer diagram and per-doc references for module d
 | `fs/` | Core filesystem contracts and lifecycle: `IFileSystem` and its optional capabilities, the core `IAuthProvider`/`ISecretStore` interfaces, the provider registry, the settings-renderer contract, `BackendManager`, and the secret host that maps a module's logical secret key to its physical SecretStorage key. Provider-neutral runtime helpers live in the public `backend-api/`. |
 | `backend-api/` | The public Backend Module API: `BackendModule` / `BackendRuntimeContext` / `RemoteBackendAdapter`, the provider-neutral auth/binding/settings/errors/checksum types, and the runtime helpers a module bundles (error classification, HTTP transport, OAuth/PKCE, headers, error logging, remote-vault contract, and the concurrency primitive). Free of core internals, Obsidian, stores, and Node/Electron (guard-pinned). |
 | `fs/modules/` | Core side of the module boundary: the backend-module registry, the single built-in import root, runtime/http/secret/auth/pkce hosts, config-patch handling, checksum registry, and the compatibility owner for settings aliases and physical storage profiles. It is core-internal; a backend implementation must not import it. |
-| `backends/` | The consolidated backend implementation directory: `googledrive/`, `dropbox/`, `onedrive/`, and `shared/` for the provider-neutral helpers they build on (`error-shape`, `adapter-state`, `module-utils`, `pkce-module-auth`, `auth-config`). One module is one backend: a provider imports only `src/backend-api/**`, `shared/`, and its own directory; `shared/` imports only the public API and itself. No backend imports the internal backend-module API, core state, or a plain `src/fs/**` helper (guard-enforced). |
+| `backends/` | The consolidated backend implementation directory: `googledrive/`, `dropbox/`, `onedrive/`, `protondrive/`, and `shared/` for the provider-neutral helpers they build on (`error-shape`, `adapter-state`, `module-utils`, `pkce-module-auth`, `auth-config`). One module is one backend: a provider imports only `src/backend-api/**`, `shared/`, and its own directory; `shared/` imports only the public API and itself. No backend imports the internal backend-module API, core state, or a plain `src/fs/**` helper (guard-enforced). |
 | `fs/managed/` | The core-managed remote filesystem (`ManagedRemoteFs` over the shared caching base): normalized metadata cache and topology projection, delta projection, and the mutation bridge from path operations to adapter identity/version/destination inputs. |
 | `tests/fs/` | Shared filesystem behaviour contracts, backend harnesses, the implementation-family and module-definition catalogs, the auth matrix, and the required-contract matrix — kept outside `src/` to preserve the production/community-lint boundary. |
 | `fs/caching/` | Shared base for id-addressed remote backends (path↔id resolution, checkpoint lifecycle, derived metadata cache, order-independent delta apply). Google Drive, Dropbox, and OneDrive build on it. Derived cache-address assignment is a separate pure concern: a contended address is resolved by a stated rule (provider-resolved spelling beats a request echo; ties by lowest stable id), applied across a claim set by cascading down the resolved parent chain. A displaced address is never published as a provider deletion. Two live ids at one derived address are settled **inside the filesystem** by namespace reconciliation, so the facts never cross the `IFileSystem` view. |
 | `fs/local/` | `LocalFs` composes the **disk authority** (`DiskSurface`, the raw `DataAdapter`: existence, actual casing, direct-child occupancy, and mutation of index-invisible paths) with the **index authority** (`VaultSurface`, `Vault`/`FileManager`: indexed mutation for index/event coherence, and the discovery snapshot). `LocalFs` owns only the authority rule, cross-regime parent creation, and cross-regime rename. |
 | `backends/googledrive/` | The Google Drive backend module: declarative settings/auth/binding, the provider adapter, normalization, folder resolution, and resumable upload. |
 | `backends/dropbox/` | The Dropbox backend module (App Folder scope): adapter over the HTTP client, worker-less PKCE, and normalization. The vault is addressed solely by its **stable folder id** (`id:<id>/<subpath>` for every operation — no absolute path is stored), so a remote move/rename of the folder keeps syncing with no migration. Its path-addressed delta encodes a rename as a delete+add pair; the shared core cache applies upserts before deletes so detection is order-independent (ADR 0006). |
+| `backends/protondrive/` | The Proton Drive backend module (unofficial; Proton's Drive SDK): session-fork sign-in with the key password sealed under a Proton-held per-session key, a `parent_id` adapter over a narrow SDK seam (`ProtonDriveApi`), plaintext-SHA-1 checksums verified on read, a transport restricted to `https://*.proton.me`, fail-closed name and event handling, and polyfills pinned by a guard. See [docs/protondrive-backend.md](docs/protondrive-backend.md). |
 | `backends/onedrive/` | The OneDrive backend module (App Folder scope, Microsoft Graph): adapter, in-plugin PKCE, chunked upload, remote-vault resolution, and normalization, with a locally-computed QuickXorHash. |
 | `ui/` | Settings UI: the main settings tab, the backend-connection section, the declarative Backend Module settings renderer, and folder-pick modals. |
 | `store/` | IndexedDB plumbing: transaction wrapper, generic metadata store, and deflate compression for stored 3-way merge base content. |
@@ -100,7 +101,7 @@ One row per directory; see the layer diagram and per-doc references for module d
                      │
          ┌─────────────────────────────────────┐
          │                IFileSystem                │
-          │  LocalFs │ ManagedRemoteFs (googledrive/onedrive/dropbox) │
+          │  LocalFs │ ManagedRemoteFs (googledrive/onedrive/dropbox/protondrive) │
          └───────────────────────────────────────────┘
 ```
 
@@ -149,7 +150,7 @@ owns the filesystem, normalized cache, cursor, scope, and checkpoint through
 `ManagedRemoteFs`
 ([design-core-backend-integration.md](docs/design/design-core-backend-integration.md),
 [adr-20260920-backend-module-boundary.md](docs/adr/adr-20260920-backend-module-boundary.md)).
-The three canonical module ids are `googledrive` / `onedrive` / `dropbox`; the `*-custom`
+The canonical module ids are `googledrive` / `onedrive` / `dropbox` / `protondrive`; the `*-custom`
 ids are settings aliases (`authMode: custom`), not separate providers.
 
 Key non-obvious decisions (full contracts in `fs/backend.ts` and `fs/auth.ts`):
@@ -171,5 +172,6 @@ Key non-obvious decisions (full contracts in `fs/backend.ts` and `fs/auth.ts`):
 - [Google Drive backend](docs/google-drive-backend.md) -- metadata cache, authentication, and the sole owner of incremental sync / cache invalidation
 - [Dropbox backend](docs/dropbox-backend.md) -- App Folder scope, id-only addressing, worker-less PKCE auth, in-app folder modal
 - [OneDrive backend](docs/onedrive-backend.md) -- App Folder scope (personal accounts), Microsoft Graph, locally-computed QuickXorHash, in-app folder modal
+- [Proton Drive backend](docs/protondrive-backend.md) -- unofficial; session-fork sign-in, sealed key password, security model, qualification worksheet, SDK upgrade runbook
 - [Error handling](docs/error-handling.md) -- resilience: error classification, retry, rate limiting
 - [OAuth worker & auth site](https://github.com/takezoh/obsidian-air-sync-auth) -- server-side Google token exchange plus the static site, in a dedicated repo. Dropbox no longer uses this site.
