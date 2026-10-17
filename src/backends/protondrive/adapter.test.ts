@@ -32,7 +32,9 @@ function drive(nodes: readonly DriveNode[], touched: readonly NodeUid[] = []): P
 	};
 }
 
-const tree = [
+const tree: DriveNode[] = [
+	// My files: the volume root has no parent.
+	{ uid: VOLUME_ROOT, name: "My files", kind: "folder", trashed: false, degraded: false },
 	folder("vol~root", VOLUME_ROOT, "vault"),
 	folder("vol~outside", VOLUME_ROOT, "elsewhere"),
 	folder("vol~sub", ROOT, "sub"),
@@ -50,10 +52,14 @@ describe("ProtonDriveAdapter with an undecryptable name", () => {
 		await expect(adapter.getChanges("event-1")).rejects.toMatchObject({ kind: "unverifiable" });
 	});
 
-	it("ignores an unnamed node outside the bound root", async () => {
+	it("reports an unnamed node outside the bound root as gone from the view", async () => {
 		const bad = folder("vol~bad", OUTSIDE, null);
 		const adapter = new ProtonDriveAdapter(drive([...tree, bad], [bad.uid]), ROOT);
-		expect(await adapter.getChanges("event-1")).toEqual({ kind: "changes", nextCursor: "event-1", changes: [] });
+		expect(await adapter.getChanges("event-1")).toEqual({
+			kind: "changes",
+			nextCursor: "event-1",
+			changes: [{ kind: "delete", id: "vol~bad" }],
+		});
 	});
 });
 
@@ -65,10 +71,35 @@ describe("ProtonDriveAdapter with an unsafe name", () => {
 		});
 	}
 
-	it("ignores an unsafe name outside the bound root", async () => {
+	it("reports an unsafe-named node provably outside the root as gone from the view", async () => {
 		const bad = folder("vol~bad", OUTSIDE, "..");
 		const adapter = new ProtonDriveAdapter(drive([...tree, bad], [bad.uid]), ROOT);
-		expect(await adapter.getChanges("event-1")).toEqual({ kind: "changes", nextCursor: "event-1", changes: [] });
+		expect(await adapter.getChanges("event-1")).toEqual({
+			kind: "changes",
+			nextCursor: "event-1",
+			changes: [{ kind: "delete", id: "vol~bad" }],
+		});
+	});
+
+	it("fails closed when an unsafe-named node's ancestry cannot be read", async () => {
+		const bad = folder("vol~bad", "vol~missing" as NodeUid, "..");
+		const adapter = new ProtonDriveAdapter(drive([...tree, bad], [bad.uid]), ROOT);
+		await expect(adapter.getChanges("event-1")).rejects.toMatchObject({ kind: "unverifiable" });
+	});
+
+	it("names the escaped unsafe name so the user can find the node", async () => {
+		const adapter = new ProtonDriveAdapter(drive([...tree, folder("vol~bad", "vol~sub" as NodeUid, "a\tb")]), ROOT);
+		await expect(adapter.listAll()).rejects.toMatchObject({ message: expect.stringContaining('"a\\tb"') as unknown });
+	});
+
+	it("refuses to write a name the read side would reject, before any provider call", async () => {
+		const adapter = new ProtonDriveAdapter(drive(tree), ROOT);
+		const destination = { addressing: "parent_id" as const, parentId: ROOT, name: "a\tb.md" };
+		await expect(adapter.createFile({ destination, content: new ArrayBuffer(0), mtimeMs: 0 })).rejects.toMatchObject({ kind: "permanent" });
+		await expect(adapter.createDirectory({ destination })).rejects.toMatchObject({ kind: "permanent" });
+		await expect(
+			adapter.move({ id: "vol~sub", expected: { id: "vol~sub", versionToken: "" }, destination }),
+		).rejects.toMatchObject({ kind: "permanent" });
 	});
 
 	it("still lists ordinary names, including dots and spaces inside them", async () => {

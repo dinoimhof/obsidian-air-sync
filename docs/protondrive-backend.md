@@ -53,7 +53,9 @@ The SDK's entity cache is a `NullCache`, so every node read is a fresh API read.
 
 - Excluded from the view: trashed nodes, drafts (a file whose first upload never committed), Proton Docs and Sheets (`application/vnd.proton.*`), and album and photo nodes.
 - A node whose **name** does not decrypt has no path. If it is inside the bound root, listing and delta fail with `unverifiable`: its absence would otherwise read as a deletion.
-- A decrypted name that cannot be one path segment is treated the same way: empty, `.`, `..`, or containing `/`, `\`, NUL, another C0 control character or DEL (`names.ts`). The SDK only checks that a name is non-empty and short enough, and another client can write such a name. Typed folder paths follow the same rule.
+- A decrypted name that cannot be one path segment is treated the same way: empty, `.`, `..`, or containing `/`, `\`, NUL, another C0 control character or DEL (`names.ts`). The SDK only checks that a name is non-empty and short enough, and another client can write such a name. Typed folder paths follow the same rule, and the folder picker does not offer such names. The error names the escaped name (`"a\tb"`) so the user can find the node.
+- Only a node **provably outside** the bound root is left out: its parent chain reaches the volume root without passing the bound folder. In a delta, such an unnamed node becomes a delete, because it may have synced before it moved out, and WARM/HOT must agree with a later COLD listing. If an ancestor cannot be read, the cycle fails closed.
+- Air Sync never **writes** a name the read side would reject. Create, mkdir and move refuse it as a permanent error before any provider call; otherwise one upload would block every later listing.
 - A node the SDK reports with other decryption errors (for example an undecryptable node key) is projected without version token or checksum: it cannot be read, so core treats it as unverifiable.
 
 ## Binding

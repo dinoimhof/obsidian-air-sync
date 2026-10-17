@@ -18,6 +18,7 @@ import type {
 import { failBackend } from "../shared/error-shape";
 import type { DriveNode, DriveUploadMetadata, EventId, NodeUid, ProtonDriveApi, RevisionUid, TreeScopeId } from "./drive-api";
 import { scopeOf } from "./drive-api";
+import { isSafeNodeName } from "./names";
 import { mediaTypeFor, projectNode } from "./normalize-object";
 
 /** Guards a parent walk against a cycle in provider data. */
@@ -30,7 +31,17 @@ async function sha1Hex(content: ArrayBuffer): Promise<string> {
 
 function requireParentId(destination: DestinationAddress): { parentId: string | null; name: string } {
 	if (destination.addressing !== "parent_id") failBackend("permanent", "Proton Drive adapter requires parent_id addressing");
+	// Never write a name the read side would reject: it would wedge every later listing.
+	if (!isSafeNodeName(destination.name)) {
+		failBackend("permanent", "Air Sync does not write a Proton Drive name that is empty, \".\" or \"..\", or contains a control character, DEL or a backslash");
+	}
 	return destination;
+}
+
+/** Fails closed on a node with no usable name; the escaped name (if any) helps the user find it. */
+function failUnnamed(node: DriveNode): never {
+	const shown = node.name === null ? "a name that cannot be decrypted" : `the name ${JSON.stringify(node.name)}, which is not a valid path segment`;
+	return failBackend("unverifiable", `Proton Drive node ${node.uid} has ${shown}`);
 }
 
 function assertExpectedIdentity(expected: ExpectedVersion, id: string): void {
@@ -105,8 +116,16 @@ export class ProtonDriveAdapter implements RemoteBackendAdapter {
 				changes.push({ kind: "delete", id: uid });
 				continue;
 			}
-			const object = await this.projectOrFail(node);
-			if (object) changes.push({ kind: "upsert", object });
+			const projection = projectNode(node, this.rootUid);
+			if (projection.kind === "object") {
+				changes.push({ kind: "upsert", object: projection.object });
+			} else if (projection.kind === "unnamed") {
+				// An unnamed node that is provably outside the root left the view (perhaps
+				// moved out after it synced): report that, so WARM/HOT agree with a later
+				// COLD listing. Inside, or where its ancestry cannot be read, fail closed.
+				if ((await this.locate(node)) !== "outside") failUnnamed(node);
+				changes.push({ kind: "delete", id: uid });
+			}
 		}
 		return { kind: "changes", nextCursor: read.lastEventId, changes };
 	}
@@ -249,22 +268,28 @@ export class ProtonDriveAdapter implements RemoteBackendAdapter {
 		return object;
 	}
 
-	/** An unnamed node inside the bound root fails closed: its absence would read as a deletion. */
+	/**
+	 * An unnamed node inside the bound root fails closed: its absence would read as a
+	 * deletion. So does one whose ancestry cannot be read; only a node provably outside
+	 * the root is left out.
+	 */
 	private async projectOrFail(node: DriveNode): Promise<RemoteObject | null> {
 		const projection = projectNode(node, this.rootUid);
 		if (projection.kind === "object") return projection.object;
-		if (projection.kind === "unnamed" && (await this.isUnderRoot(node))) {
-			failBackend("unverifiable", `Proton Drive node ${node.uid} has a name that cannot be decrypted or is not a valid path segment`);
-		}
+		if (projection.kind === "unnamed" && (await this.locate(node)) !== "outside") failUnnamed(node);
 		return null;
 	}
 
-	private async isUnderRoot(node: DriveNode): Promise<boolean> {
+	/** Where `node` sits relative to the bound root; `unknown` when an ancestor cannot be read. */
+	private async locate(node: DriveNode): Promise<"inside" | "outside" | "unknown"> {
 		let parent = node.parentUid;
-		for (let depth = 0; parent !== undefined && depth < MAX_TREE_DEPTH; depth++) {
-			if (parent === this.rootUid) return true;
-			parent = (await this.drive.getNodes([parent])).get(parent)?.parentUid;
+		for (let depth = 0; depth < MAX_TREE_DEPTH; depth++) {
+			if (parent === undefined) return "outside";
+			if (parent === this.rootUid) return "inside";
+			const ancestor: DriveNode | undefined = (await this.drive.getNodes([parent])).get(parent);
+			if (!ancestor) return "unknown";
+			parent = ancestor.parentUid;
 		}
-		return false;
+		return "unknown";
 	}
 }

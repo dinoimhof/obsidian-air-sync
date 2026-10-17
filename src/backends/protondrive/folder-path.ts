@@ -15,7 +15,7 @@ export function parseFolderPath(input: string): FolderPath {
 	const segments = trimmed.split("/");
 	for (const segment of segments) {
 		if (segment.trim() === "" || !isSafeNodeName(segment)) {
-			failBackend("permanent", "The Proton Drive folder path is not valid: every segment must be a folder name (no empty, \".\" or \"..\" segment).");
+			failBackend("permanent", "The Proton Drive folder path is not valid: use \"/\" between folder names; a name cannot be empty, \".\" or \"..\", or contain a backslash or control character.");
 		}
 	}
 	return segments as unknown as FolderPath;
@@ -41,6 +41,7 @@ export async function findOrCreateFolderPath(drive: FolderTreeApi, path: FolderP
 export async function listMyFilesFolders(drive: FolderTreeApi): Promise<string[]> {
 	const root = await drive.getMyFilesRoot();
 	return (await drive.listChildren(root.uid))
-		.flatMap((child) => (child.kind === "folder" && child.name !== null ? [child.name] : []))
+		// An unsafe name (e.g. one containing "/") would bind a different folder once parsed.
+		.flatMap((child) => (child.kind === "folder" && child.name !== null && isSafeNodeName(child.name) ? [child.name] : []))
 		.sort((a, b) => a.localeCompare(b));
 }
