@@ -114,6 +114,11 @@ async function bootstrapOnedrive(): Promise<void> {
 
 /** Proton has no redirect: the module's own start/complete pair opens a session fork and polls it. */
 async function bootstrapProtondrive(): Promise<void> {
+	stdout.write(
+		"⚠ Use a throwaway Proton account. The secrets file this writes holds a live session with full\n" +
+			"  account access (its key password is sealed, but the tokens work until revoked). Keep it out of\n" +
+			"  backups and delete it when done; revoke the session in account.proton.me if it ever leaks.\n\n",
+	);
 	const context = protonRuntimeContext();
 	await protonDriveModule.auth.start(context, {});
 	stdout.write("Waiting for the sign-in to finish (up to 10 minutes)...\n");
