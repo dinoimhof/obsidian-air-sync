@@ -111,8 +111,16 @@ export class SdkDriveApi implements ProtonDriveApi {
 						touched.add(event.nodeUid as NodeUid);
 						lastEventId = event.eventId as EventId;
 						break;
-					default:
+					case DriveEventType.FastForward:
+					// Shared-with-me content is outside any bound vault folder.
+					// falls through
+					case DriveEventType.SharedWithMeUpdated:
 						lastEventId = event.eventId as EventId;
+						break;
+					default:
+						// An event type this module does not know may carry a change it would
+						// silently skip forever: rescan instead of advancing past it.
+						return { kind: "refresh" };
 				}
 			}
 			return { kind: "events", touched: [...touched], lastEventId };

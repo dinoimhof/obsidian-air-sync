@@ -46,7 +46,7 @@ Proton cannot redirect back to Obsidian, so the module declares `auth.completion
 
 ### Change feed
 
-The cursor is a volume event id. Events are volume-wide and name only the touched node, so each delta re-reads the touched nodes and reports their current state: gone or trashed nodes as deletes, the rest as upserts. Core drops nodes outside the bound root. Re-reading makes the delta independent of event order, and a replayed event is harmless. A folder moved into the root reports no descendants; `listSubtreeById` lists them. A Proton `refresh` event means the log cannot be replayed from the cursor, and becomes `cursor_invalid`.
+The cursor is a volume event id. Events are volume-wide and name only the touched node, so each delta re-reads the touched nodes and reports their current state: gone or trashed nodes as deletes, the rest as upserts. Core drops nodes outside the bound root. Re-reading makes the delta independent of event order, and a replayed event is harmless. A folder moved into the root reports no descendants; `listSubtreeById` lists them. A Proton `refresh` event means the log cannot be replayed from the cursor, and becomes `cursor_invalid`. Fast-forward and shared-with-me events only advance the cursor. Any event type the module does not know also becomes `cursor_invalid` (a full rescan) rather than being skipped, so a change Proton reports in a new way is never lost.
 
 The SDK's entity cache is a `NullCache`, so every node read is a fresh API read. Only decrypted node keys are cached, which do not change for a node.
 
