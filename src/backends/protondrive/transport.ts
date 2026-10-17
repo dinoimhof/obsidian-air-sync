@@ -3,6 +3,7 @@ import { failBackend } from "../shared/error-shape";
 import { PROTON_API_BASE, PROTON_APP_VERSION } from "./constants";
 import type { SessionHandle, SessionTokens } from "./session";
 import { parseSessionTokens } from "./session";
+import { sanitizeRoute } from "./redact";
 
 /** Proton's success codes in a JSON body (`1001` = accepted, finishes asynchronously). */
 const OK_CODES: ReadonlySet<number> = new Set([1000, 1001]);
@@ -72,10 +73,6 @@ function jsonCode(body: JsonValue): number | undefined {
 	return typeof body.Code === "number" ? body.Code : undefined;
 }
 
-function jsonError(body: JsonValue): string | undefined {
-	if (typeof body !== "object" || body === null || Array.isArray(body)) return undefined;
-	return typeof body.Error === "string" ? body.Error : undefined;
-}
 
 /**
  * Every Proton request, authenticated or not, over the module's `requestUrl`
@@ -109,8 +106,9 @@ export class ProtonTransport {
 		const parsed = await response.json().catch(() => null);
 		const code = parsed === null ? undefined : jsonCode(parsed);
 		if (response.status >= 400 || code === undefined || !OK_CODES.has(code)) {
-			const detail = parsed === null ? undefined : jsonError(parsed);
-			throw new ProtonApiError(response.status, code, `${method} ${path} failed (${response.status}${code === undefined ? "" : `/${code}`})${detail ? `: ${detail}` : ""}`);
+			// Route without query or identifiers, and no free-text detail: this message is
+			// logged, and Proton's text or the path can carry an email or the fork selector.
+			throw new ProtonApiError(response.status, code, `${method} ${sanitizeRoute(path)} failed (${response.status}${code === undefined ? "" : `/${code}`})`);
 		}
 		return parsed as Readonly<Record<string, JsonValue>>;
 	}

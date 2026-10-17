@@ -148,6 +148,26 @@ describe("Proton session-fork sign-in", () => {
 		expect(secrets.values.has(FORK_SECRET_KEY)).toBe(false);
 	});
 
+	it("never puts the fork selector into an error message", async () => {
+		for (const status of [400, 500]) {
+			const secrets = memorySecrets();
+			const http: BackendHttpClient = {
+				request: (request) =>
+					Promise.resolve(
+						request.url.endsWith("/auth/v4/sessions/forks")
+							? reply(200, { Code: 1000, Selector: "S3lectorValue", UserCode: "CODE" })
+							: reply(status, { Code: 2001, Error: "Invalid selector S3lectorValue" }),
+					),
+			};
+			const transport = new ProtonTransport(http, null);
+			await beginFork(transport, secrets, 0);
+
+			const err = await completeFork(transport, secrets, clock).catch((e: unknown) => e);
+
+			expect(String((err as Error).message)).not.toContain("S3lectorValue");
+		}
+	});
+
 	it("polls the sign-in restarted while it was waiting", async () => {
 		const secrets = memorySecrets();
 		const polled: string[] = [];
