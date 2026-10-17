@@ -30,14 +30,17 @@ const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}
 const BEARER = /\b(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi;
 const FORK_SELECTOR = /(sessions\/forks\/)[^\s/?#"')]+/gi;
 const QUERY = /(\?)[^\s"')]+/g;
+// The SDK prefixes block-upload log lines with `block <index>:<storage upload token>`.
+const BLOCK_UPLOAD_TOKEN = /(\bblock \d+:)[A-Za-z0-9+/=_-]+/g;
 const CREDENTIAL_FIELD =
 	/\b(access[_-]?token|refresh[_-]?token|key[_-]?password|selector|payload|x-pm-uid|pm-storage-token|authorization)(["']?\s*[:=]\s*["']?)[^\s"',}]+/gi;
 
-/** Remove emails, bearer values, fork selectors, query strings and credential fields. */
+/** Remove emails, bearer values, fork selectors, upload tokens, query strings and credential fields. */
 export function scrub(text: string): string {
 	return text
 		.replace(BEARER, "$1[redacted]")
 		.replace(FORK_SELECTOR, "$1{id}")
+		.replace(BLOCK_UPLOAD_TOKEN, "$1[redacted]")
 		.replace(CREDENTIAL_FIELD, "$1$2[redacted]")
 		.replace(QUERY, "$1[query]")
 		.replace(EMAIL, "[email]");

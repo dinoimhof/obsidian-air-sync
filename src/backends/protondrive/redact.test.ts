@@ -25,6 +25,10 @@ describe("scrub", () => {
 		expect(text).toContain("[email]");
 	});
 
+	it("removes the storage upload token the SDK puts in block log prefixes", () => {
+		expect(scrub("block 3:dXBsb2FkLXRva2Vu+/=: uploaded")).toBe("block 3:[redacted]: uploaded");
+	});
+
 	it("leaves an ordinary message and node uids intact", () => {
 		expect(scrub("Proton Drive node changed before move")).toBe("Proton Drive node changed before move");
 		expect(scrub("node uid: vol~link changed")).toBe("node uid: vol~link changed");

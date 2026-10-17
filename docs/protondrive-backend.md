@@ -98,7 +98,8 @@ carry a credential or personal data. There are two layers:
   input are never echoed.
 - **At the logger boundary.** Module messages and the SDK's own log lines (bridged in
   `sdk-client.ts`) pass through a scrubber. It removes email addresses, `Bearer` values,
-  fork selectors, query strings and credential fields, and redacts context values under
+  fork selectors, the storage upload tokens the SDK puts in its block log prefixes, query
+  strings and credential fields, and redacts context values under
   credential-like keys. It is defense in depth for anything a future SDK version might log.
 
 Node uids stay in messages: they are opaque, and they are needed to diagnose a sync failure.
