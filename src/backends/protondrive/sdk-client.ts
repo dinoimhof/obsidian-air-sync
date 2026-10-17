@@ -17,6 +17,7 @@ import type { ProtonDriveApi } from "./drive-api";
 import { SdkDriveApi } from "./sdk-drive-api";
 import { SessionHandle } from "./session";
 import { ProtonTransport } from "./transport";
+import { scrubbingLogger } from "./redact";
 
 declare const clientUidBrand: unique symbol;
 /** Stable per-install id the SDK stamps on upload drafts. */
@@ -51,8 +52,12 @@ function srpModule(transport: ProtonTransport): SRPModule {
 	};
 }
 
-/** SDK logs go to the module logger at one level lower; metrics are not collected. */
-function telemetry(logger: BackendLogger): ProtonDriveTelemetry {
+/**
+ * SDK logs go to the module logger at one level lower, scrubbed (an SDK message can name
+ * a signer email or carry a request path); metrics are not collected.
+ */
+export function telemetry(raw: BackendLogger): ProtonDriveTelemetry {
+	const logger = scrubbingLogger(raw);
 	return {
 		getLogger: (name) => ({
 			debug: (message) => logger.debug(`[sdk:${name}] ${message}`),

@@ -2,6 +2,7 @@ import type { BackendErrorShape } from "../../backend-api";
 import { backendError, isBackendErrorShape } from "../../backend-api";
 import { backendErrorFromStatus } from "../shared/error-shape";
 import { ProtonApiError } from "./transport";
+import { scrub } from "./redact";
 
 /** Proton API body codes the taxonomy distinguishes. */
 const ALREADY_EXISTS = 2500;
@@ -39,7 +40,8 @@ function fromCode(code: number | undefined, message: string): BackendErrorShape 
 /** SDK errors are matched by `name`, so this file does not load the SDK runtime. */
 export function translateProtonError(err: unknown): BackendErrorShape {
 	if (isBackendErrorShape(err)) return err;
-	const message = err instanceof Error ? err.message : "Proton Drive request failed";
+	// SDK messages are not ours to vet: scrub them before they become a logged message.
+	const message = err instanceof Error ? scrub(err.message) : "Proton Drive request failed";
 	if (err instanceof ProtonApiError) {
 		return fromCode(err.code, message) ?? backendErrorFromStatus(err.status, message);
 	}
