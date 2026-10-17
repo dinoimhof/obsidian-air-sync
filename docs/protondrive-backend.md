@@ -126,6 +126,17 @@ Node uids stay in messages: they are opaque, and they are needed to diagnose a s
 
 `@protontech/crypto` ships untranspiled TypeScript that does not compile under this repo's compiler options. `tsconfig.json` maps its specifiers to the type declarations in `protontech-crypto.d.ts`; esbuild (`tsconfig.bundle.json`) and Vitest (`server.deps.inline`) resolve the real package.
 
+## SDK upgrade runbook
+
+The SDK is pre-1.0, its README still says it is not ready for third-party production use, and Proton has announced a cryptographic-model change (estimated end 2026 / early 2027) after which clients that only speak the old model stop working. Proton signals a retired client with API code 5003 (see Provider errors). Every bump of `@protontech/drive-sdk` or `@protontech/crypto` goes through these steps, in order:
+
+1. **Pin exactly** in `package.json` (no ranges) and regenerate the lockfile; `npm ci` must succeed.
+2. **Read the SDK diff**: `npm pack` both versions and diff `dist/interface/*.d.ts` and the README. Look at the node, revision (`claimedSize`, `claimedDigests`), event and upload interfaces this module projects.
+3. **Run `npm run smoke:protondrive`.** It bundles the real packages the way `main.js` is built and calls every crypto, SRP and SDK entry point the module uses on a throwaway key, offline. It catches API drift that the hand-written `protontech-crypto.d.ts` hides from the type checker.
+4. **Run the gate**, which includes the polyfill guard and the module's unit and contract tests.
+5. **Run the live E2E** (`npm run test:e2e:protondrive`) on a throwaway account, then the manual live checklist.
+6. If the bundle grows new runtime pieces (the SDK's optional search WASM, workers), check that they stay out of `main.js` unless the module uses them.
+
 ## Verification
 
 The five shared contracts run against the real adapter over an in-memory `ProtonDriveApi` fake (`tests/fs/protondrive/managed.contract-harness.ts`). The opt-in live e2e (`e2e/protondrive.e2e.ts`) runs the filesystem, priority and rename-safety suites against a real account through the real SDK; see [e2e-testing.md](e2e-testing.md).

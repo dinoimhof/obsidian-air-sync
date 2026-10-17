@@ -179,15 +179,16 @@ export default defineConfig(
 						'sync-state-ownership-guard.test.mjs',
 						'backend-module-boundary-guard.test.mjs',
 						'protondrive-polyfill-guard.test.mjs',
+						'protondrive-sdk-smoke.mjs',
 						'manifest.json',
 						'test-fixtures/lint-bot-repro/untyped-dependencies.d.ts',
 						'test-fixtures/lint-bot-repro/untyped-vitest.d.ts',
 						'vitest.config.ts'
 					],
-					// 12: ten long-standing default-project entries plus the
-					// backend-module boundary guard and the Proton Drive polyfill guard
-					// (.mjs is outside tsconfig include).
-					maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 12,
+					// 13: ten long-standing default-project entries plus the
+					// backend-module boundary guard and the Proton Drive polyfill guard and
+					// SDK smoke script (.mjs is outside tsconfig include).
+					maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 13,
 				},
 				tsconfigRootDir: configRoot,
 				extraFileExtensions: ['.json']
