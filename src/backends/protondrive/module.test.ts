@@ -81,7 +81,7 @@ describe("protondrive binding.resolveDefault", () => {
 
 		await expect(
 			protonDriveModule.binding.resolveDefault(context, { folderPath: "notes/../other" }, "Vault"),
-		).rejects.toMatchObject({ kind: "permanent" });
+		).rejects.toMatchObject({ kind: "permanent", message: expect.not.stringMatching(/notes|other/) as unknown });
 		expect(tree.created).toEqual([]);
 	});
 
@@ -90,7 +90,7 @@ describe("protondrive binding.resolveDefault", () => {
 
 		await expect(
 			protonDriveModule.binding.resolveDefault(context, { folderPath: "notes/notes" }, "Vault"),
-		).rejects.toMatchObject({ kind: "permanent" });
+		).rejects.toMatchObject({ kind: "permanent", message: expect.not.stringContaining("notes") as unknown });
 	});
 
 	it("with a blank folder path, binds the obsidian-air-sync/<vault> default", async () => {
@@ -113,7 +113,8 @@ describe("protondrive auth.complete", () => {
 			delete: (key) => Promise.resolve(void secrets.delete(key)),
 		};
 		const logged: string[] = [];
-		const log = (message: string) => void logged.push(message);
+		// Record the context too: the failure text travels there, not in the message.
+		const log = (message: string, logContext?: Record<string, unknown>) => void logged.push(JSON.stringify([message, logContext]));
 		const context = {
 			http: { request: () => Promise.reject(new Error("no request expected")) },
 			secrets: store,
@@ -160,7 +161,9 @@ describe("protondrive auth.complete", () => {
 		expect(patch.set).not.toHaveProperty("remoteVaultFolderId");
 		expect(patch.unset).toContain("pendingAuthState");
 		expect(secrets.has(SESSION_SECRET_KEY)).toBe(true);
-		expect(logged.some((message) => message.includes("notes/notes"))).toBe(true);
+		expect(logged.some((message) => message.includes("could not be bound"))).toBe(true);
+		// The configured folder path is the user's own folder structure: never logged.
+		expect(logged.some((message) => message.includes("notes"))).toBe(false);
 	});
 });
 

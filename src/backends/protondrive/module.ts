@@ -24,6 +24,7 @@ import type { ClientUid } from "./sdk-client";
 import { openProtonDrive } from "./sdk-client";
 import { SESSION_SECRET_KEY, SessionHandle, saveSession } from "./session";
 import { ProtonTransport } from "./transport";
+import { scrubbingLogger } from "./redact";
 
 function clientUidOf(config: Readonly<JsonObject>): ClientUid {
 	return (asString(config.clientUid) || `air-sync-${crypto.randomUUID()}`) as ClientUid;
@@ -56,7 +57,8 @@ const auth: BackendAuth = {
 				const { drive } = await openProtonDrive(context, clientUid);
 				set.remoteVaultFolderId = (await findOrCreateFolderPath(drive, parseFolderPath(folderPath))).uid;
 			} catch (err) {
-				context.logger.error(`Signed in, but the Proton Drive folder "${folderPath}" could not be bound`, {
+				// The folder path is the user's own folder structure: never logged.
+				scrubbingLogger(context.logger).error("Signed in, but the configured Proton Drive folder could not be bound", {
 					message: errorMessage(err),
 				});
 			}

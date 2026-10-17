@@ -14,7 +14,7 @@ export function parseFolderPath(input: string): FolderPath {
 	const segments = trimmed.split("/");
 	for (const segment of segments) {
 		if (segment.trim() === "" || segment === "." || segment === "..") {
-			failBackend("permanent", `"${input}" is not a valid Proton Drive folder path: every segment must be a folder name.`);
+			failBackend("permanent", "The Proton Drive folder path is not valid: every segment must be a folder name (no empty, \".\" or \"..\" segment).");
 		}
 	}
 	return segments as unknown as FolderPath;
@@ -28,7 +28,7 @@ export async function findOrCreateFolderPath(drive: FolderTreeApi, path: FolderP
 		if (!existing) {
 			folder = await drive.createFolder(folder.uid, name);
 		} else if (existing.kind !== "folder") {
-			failBackend("permanent", `"${path.slice(0, index + 1).join("/")}" already exists in Proton Drive and is not a folder.`);
+			failBackend("permanent", `Segment ${index + 1} of the Proton Drive folder path already exists and is not a folder.`);
 		} else {
 			folder = existing;
 		}
