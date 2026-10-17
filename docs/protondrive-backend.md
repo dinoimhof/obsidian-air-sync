@@ -72,12 +72,12 @@ Because the row is shown before connecting, the folder can be chosen before sign
 
 ## Provider errors
 
-Proton failures map onto core's error taxonomy so that each one either retries usefully or stops with an actionable message, never loops:
+Proton failures map onto core's error taxonomy so that each one either retries or stops; none loops forever:
 
-- **Code 5003** ("You need to update this app") is how Proton retires an old client version, for example after its crypto-model change. It is permanent (`protondrive:app-update-required`) and tells the user to update the plugin.
-- **A changed Proton password** (or mailbox password in two-password mode) leaves the stored key password unable to open the account keys. That is an `auth` error asking to reconnect, for user keys and legacy address keys alike. It aborts the cycle; nothing is cleared or rewritten. A new sign-in brings a new key password.
-- **Rate limits.** The SDK honours `Retry-After` for its own requests. The module's own calls (sign-in poll, account, session refresh) carry it too, as a `retryAfterMs` clamped to 15 minutes, so core waits as long as Proton asks.
-- **Human verification** (9001) and **quota** codes are permanent with their own codes. Unknown SDK errors stay `transient`, because core bounds retries and quarantines persistent failures.
+- **Code 5003** ("You need to update this app") is how Proton retires an old client version, for example after its crypto-model change. It is permanent (`protondrive:app-update-required`). The log carries an "update the plugin" message. Core's sync notice currently shows only its generic wording (operation, status, `permanent`); it does not show a module's message or code.
+- **A changed Proton password** (or mailbox password in two-password mode) leaves the stored key password unable to open the account keys. That is an `auth` error asking to reconnect: no user key opens, or no legacy address key opens. It aborts the cycle; nothing is cleared or rewritten, and a new sign-in brings a new key password. The SDK batches per-node failures into one `ProtonDriveError` whose `cause` holds them. Error translation returns the most severe classified cause, so the prompt appears on every path, not only on a full listing. An address whose keys fail for another reason (no key, an invalid token signature after the user keys opened) is a permanent error, because reconnecting cannot fix it. A secondary address like that is skipped rather than failing the whole account.
+- **Rate limits.** The SDK honours `Retry-After` for its own requests. The module's own calls (account, session refresh) carry it as `retryAfterMs`, clamped to 15 minutes, on 429 and 5xx. Core's retry policy uses it up to its own maximum delay.
+- **Human verification** (9001) and **quota** codes are permanent. Unknown SDK errors stay `transient`, because core bounds its retries.
 
 ## Transport allowlist
 
