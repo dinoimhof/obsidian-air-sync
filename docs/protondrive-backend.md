@@ -70,6 +70,15 @@ Proton Drive has one folder control, core's **Remote folder** row, shown whether
 
 Because the row is shown before connecting, the folder can be chosen before signing in. When `folderPath` is set, `auth.complete` resolves it right after storing the session and returns `remoteVaultFolderId` in its patch, so the vault is bound and syncing as soon as sign-in finishes. When it is empty the vault stays unbound until the user uses the row. If resolving the folder fails after a successful sign-in, the session is kept, the vault stays unbound (core's notice asks to choose a folder), and the error is logged; **Use this folder** then retries the same path and shows the error. Disconnect keeps `folderPath` and nothing else, so reconnecting rebinds the same folder.
 
+## Provider errors
+
+Proton failures map onto core's error taxonomy so that each one either retries usefully or stops with an actionable message, never loops:
+
+- **Code 5003** ("You need to update this app") is how Proton retires an old client version, for example after its crypto-model change. It is permanent (`protondrive:app-update-required`) and tells the user to update the plugin.
+- **A changed Proton password** (or mailbox password in two-password mode) leaves the stored key password unable to open the account keys. That is an `auth` error asking to reconnect, for user keys and legacy address keys alike. It aborts the cycle; nothing is cleared or rewritten. A new sign-in brings a new key password.
+- **Rate limits.** The SDK honours `Retry-After` for its own requests. The module's own calls (sign-in poll, account, session refresh) carry it too, as a `retryAfterMs` clamped to 15 minutes, so core waits as long as Proton asks.
+- **Human verification** (9001) and **quota** codes are permanent with their own codes. Unknown SDK errors stay `transient`, because core bounds retries and quarantines persistent failures.
+
 ## Transport allowlist
 
 Every request carries the session (`Authorization`, `x-pm-uid`), and the SDK takes storage
