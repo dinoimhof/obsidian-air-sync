@@ -28,6 +28,7 @@ import type { CryptoApiInterface, PrivateKeyReference, PublicKeyReference } from
 import { VERIFICATION_STATUS } from "@protontech/crypto/constants";
 import type { ProtonDriveAccount, ProtonDriveAccountAddress } from "@protontech/drive-sdk";
 import type { JsonValue } from "../../backend-api";
+import { isBackendErrorShape } from "../../backend-api";
 import type { KeyPassword } from "./session";
 import type { ProtonTransport } from "./transport";
 import { ProtonApiError } from "./transport";
@@ -101,7 +102,16 @@ export class ProtonAccount implements ProtonDriveAccount {
 
 	async getOwnAddresses(): Promise<ProtonDriveAccountAddress[]> {
 		const addresses = await this.addresses();
-		return Promise.all(addresses.map((address) => this.decryptAddress(address)));
+		// One secondary address whose keys cannot be opened must not take the whole account
+		// down; a changed password (auth) or no usable address at all still fails.
+		const settled = await Promise.allSettled(addresses.map((address) => this.decryptAddress(address)));
+		const usable = settled.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+		const failures = settled.flatMap((result) => (result.status === "rejected" ? [result.reason as Error] : []));
+		const auth = failures.find((reason) => isBackendErrorShape(reason) && reason.kind === "auth");
+		if (auth !== undefined) throw auth;
+		const [first] = failures;
+		if (usable.length === 0 && first) throw first;
+		return usable;
 	}
 
 	async getOwnAddress(emailOrAddressId: string): Promise<ProtonDriveAccountAddress> {
@@ -178,8 +188,13 @@ export class ProtonAccount implements ProtonDriveAccount {
 		const settled = await Promise.allSettled(address.keys.map((key) => this.addressKey(key)));
 		const keys = settled.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
 		if (keys.length === 0) {
-			// Legacy keys open with the key password itself: none opening means it changed.
-			failBackend("auth", "Proton could not unlock an address key with the stored key password (was the Proton password changed?). Reconnect Proton Drive.");
+			// Legacy keys open with the key password itself: none opening means it changed, and
+			// a new sign-in helps. Token keys only fail here after the user keys opened (the key
+			// password is fine), and an address with no key cannot be fixed by reconnecting.
+			if (address.keys.some((key) => !key.token)) {
+				failBackend("auth", "Proton could not unlock an address key with the stored key password (was the Proton password changed?). Reconnect Proton Drive.");
+			}
+			failBackend("permanent", "No key of one of the account's Proton addresses can be opened");
 		}
 		return { email: address.email, addressId: address.id, primaryKeyIndex: 0, keys };
 	}
