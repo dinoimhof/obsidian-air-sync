@@ -2,6 +2,7 @@ import type {
 	BackendAuth,
 	BackendBinding,
 	BackendModule,
+	BackendRuntimeContext,
 	BindingResult,
 	JsonObject,
 	RemoteBackendAdapter,
@@ -20,12 +21,26 @@ import { PROTON_MODULE_VERSION } from "./constants";
 import type { DriveNode, NodeUid } from "./drive-api";
 import { findOrCreateFolderPath, listMyFilesFolders, parseFolderPath } from "./folder-path";
 import { FORK_SECRET_KEY, beginFork, completeFork } from "./fork-login";
-import type { ClientUid } from "./sdk-client";
-import { openProtonDrive, releaseProtonDrive } from "./sdk-client";
+import type { ClientUid, ProtonConnection } from "./sdk-client";
 import { SESSION_SECRET_KEY, SessionHandle, loadSessionTokens, saveSession } from "./session";
 import { ProtonTransport } from "./transport";
 import { sealKeyPassword } from "./local-key";
 import { scrubbingLogger } from "./redact";
+
+/**
+ * The SDK, its crypto and the polyfills load on first Proton Drive use, not when Air Sync
+ * loads: an install that never uses Proton Drive never evaluates them, so a runtime that
+ * cannot run them breaks only this backend, never the others.
+ */
+const sdkClient = () => import("./sdk-client");
+
+async function openProtonDrive(context: BackendRuntimeContext, clientUid: ClientUid): Promise<ProtonConnection> {
+	return (await sdkClient()).openProtonDrive(context, clientUid);
+}
+
+async function releaseProtonDrive(context: BackendRuntimeContext): Promise<void> {
+	await (await sdkClient()).releaseProtonDrive(context);
+}
 
 function clientUidOf(config: Readonly<JsonObject>): ClientUid {
 	return (asString(config.clientUid) || `air-sync-${crypto.randomUUID()}`) as ClientUid;

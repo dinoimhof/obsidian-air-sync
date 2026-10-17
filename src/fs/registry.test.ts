@@ -30,6 +30,13 @@ const mockApp = {} as App;
 const platform = { mobile: false };
 const settings = connectedSettings();
 
+// The Proton Drive module loads its SDK client (the SDK and crypto) lazily, on first use.
+// These tests build every module's filesystem, so load it once up front: under coverage
+// instrumentation that first load can take longer than a single test's timeout.
+beforeAll(async () => {
+	await import("../backends/protondrive/sdk-client");
+}, 60_000);
+
 describe("backend module registry composition", () => {
 	beforeAll(() => {
 		initRegistry(connectedSecretStore, {

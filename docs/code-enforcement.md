@@ -138,9 +138,9 @@ testing, and no unit test double reproduces it.
 
 | | |
 |---|---|
-| **Prevents** | (a) the production polyfill entry leaving a present-but-broken `toHex`/`toBase64`/`fromHex`/`fromBase64` in place (core-js alone keeps a present `fromHex` and some broken `fromBase64`s); (b) an `@protontech/*` module, or core-js, evaluating before `broken-builtins.ts` in the backend's import graph |
+| **Prevents** | (a) the production polyfill entry leaving a present-but-broken `toHex`/`toBase64`/`fromHex`/`fromBase64` in place (core-js alone keeps a present `fromHex` and some broken `fromBase64`s); (b) an `@protontech/*` module, or core-js, evaluating before `broken-builtins.ts` in the SDK client's import graph; (c) loading Air Sync (the built-in backend registry) evaluating the Proton SDK, crypto or polyfills, which `module.ts` loads only on first Proton Drive use |
 | **Where** | `protondrive-polyfill-guard.test.mjs`, run by `npm run lint:bot-repro` |
-| **How** | bundles `src/backends/protondrive/polyfills.ts` with esbuild and runs it in a fresh Node process where all four methods exist and throw; walks the static import graph from `module.ts` in evaluation order |
+| **How** | bundles `src/backends/protondrive/polyfills.ts` with esbuild and runs it in a fresh Node process where all four methods exist and throw; walks the static import graph in evaluation order; bundles `src/fs/modules/builtin-modules.ts` as production does and checks core-js never ran at load |
 | **Exception** | none |
 
 Runtime validation (`src/fs/modules/validate-module.ts`) is authoritative for a candidate
