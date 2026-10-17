@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { translateProtonError } from "./errors";
+import { ProtonApiError } from "./transport";
 
 function sdkError(name: string, message: string, fields: Record<string, unknown> = {}): Error {
 	return Object.assign(new Error(message), { name }, fields);
@@ -19,5 +20,20 @@ describe("translateProtonError", () => {
 			expect(shape.message).not.toMatch(/jane|s3cr3t|Email=/);
 		}
 		expect(translateProtonError(sdkError("APICodeError", leaky, { code: 200001 }))).toMatchObject({ permanentCode: "protondrive:quota" });
+	});
+});
+
+describe("translateProtonError for provider-side change", () => {
+	it("maps code 5003 (app update required) to a permanent, actionable error", () => {
+		for (const err of [
+			new ProtonApiError(400, 5003, "GET core/v4/users failed (400/5003)"),
+			Object.assign(new Error("Upgrade required"), { name: "APICodeError", code: 5003 }),
+		]) {
+			expect(translateProtonError(err)).toMatchObject({
+				kind: "permanent",
+				permanentCode: "protondrive:app-update-required",
+				message: expect.stringContaining("Update the plugin") as unknown,
+			});
+		}
 	});
 });

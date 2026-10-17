@@ -9,6 +9,8 @@ const ALREADY_EXISTS = 2500;
 const NOT_EXISTS = 2501;
 const NOT_ENOUGH_PERMISSIONS = 2011;
 const HUMAN_VERIFICATION_REQUIRED = 9001;
+/** Proton's OpenAPI types: "You need to update this app in order to perform this operation". */
+const APP_UPDATE_REQUIRED = 5003;
 const INSUFFICIENT_QUOTA_CODES: ReadonlySet<number> = new Set([200001, 200002, 200003, 200100]);
 
 function numberField(err: object, key: string): number | undefined {
@@ -26,6 +28,11 @@ function fromCode(code: number | undefined, message: string): BackendErrorShape 
 			return backendError("not_found", message);
 		case NOT_ENOUGH_PERMISSIONS:
 			return backendError("permission", message);
+		case APP_UPDATE_REQUIRED:
+			// Proton retires old clients (e.g. after its crypto-model change): retrying cannot help.
+			return backendError("permanent", "Proton requires a newer version of Air Sync. Update the plugin, then sync again.", {
+				permanentCode: "protondrive:app-update-required",
+			});
 		case HUMAN_VERIFICATION_REQUIRED:
 			return backendError("permanent", "Proton requires human verification. Sign in at drive.proton.me, then sync again.", {
 				permanentCode: "protondrive:human-verification",
