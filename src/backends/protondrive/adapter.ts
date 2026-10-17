@@ -152,6 +152,12 @@ export class ProtonDriveAdapter implements RemoteBackendAdapter {
 		if (download.kind === "signature_invalid") {
 			return { kind: "unverifiable", reason: "Proton Drive content signature did not verify" };
 		}
+		// Core compares files by this claimed SHA-1 without downloading them, so bytes that
+		// disagree with it (another client's bug, a future SDK or crypto change) must never
+		// become evidence for either side.
+		if (observed.checksum?.algorithm === "sha1" && (await sha1Hex(download.bytes)) !== observed.checksum.value) {
+			return { kind: "unverifiable", reason: "Proton Drive content does not match its recorded SHA-1" };
+		}
 		return { kind: "content", object: observed, content: download.bytes };
 	}
 

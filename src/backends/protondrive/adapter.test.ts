@@ -76,3 +76,38 @@ describe("ProtonDriveAdapter with an unsafe name", () => {
 		expect((await adapter.listAll()).map((object) => object.name).sort()).toEqual(["my notes.v2 (1)", "sub"]);
 	});
 });
+
+describe("ProtonDriveAdapter version-bound read", () => {
+	async function sha1(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
+		const digest = new Uint8Array(await crypto.subtle.digest("SHA-1", bytes));
+		return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+	}
+
+	async function adapterServing(claimed: string, served: string) {
+		const file: DriveNode = {
+			uid: "vol~note" as NodeUid,
+			parentUid: ROOT,
+			name: "note.md",
+			kind: "file",
+			trashed: false,
+			degraded: false,
+			revision: { uid: "vol~note~rev1" as never, size: claimed.length, sha1: await sha1(new TextEncoder().encode(claimed)) },
+		};
+		const base = drive([...tree, file]);
+		const servedBytes = new TextEncoder().encode(served);
+		return new ProtonDriveAdapter(
+			{ ...base, downloadRevision: () => Promise.resolve({ kind: "content", bytes: servedBytes.buffer.slice(0) }) },
+			ROOT,
+		);
+	}
+
+	it("returns content whose bytes match the claimed SHA-1", async () => {
+		const adapter = await adapterServing("hello", "hello");
+		await expect(adapter.read({ id: "vol~note", versionToken: "vol~note~rev1" })).resolves.toMatchObject({ kind: "content" });
+	});
+
+	it("refuses content whose bytes disagree with the claimed SHA-1", async () => {
+		const adapter = await adapterServing("hello", "hellO");
+		await expect(adapter.read({ id: "vol~note", versionToken: "vol~note~rev1" })).resolves.toMatchObject({ kind: "unverifiable" });
+	});
+});
