@@ -1,5 +1,6 @@
 import type { BackendHttpClient, BackendHttpMethod, BackendHttpResponse, JsonValue } from "../../backend-api";
-import { failBackend } from "../shared/error-shape";
+import { backendError } from "../../backend-api";
+import { failBackend, toBackendError } from "../shared/error-shape";
 import { PROTON_API_BASE, PROTON_API_HOST, PROTON_APP_VERSION } from "./constants";
 import type { SessionHandle, SessionTokens } from "./session";
 import { parseSessionTokens } from "./session";
@@ -18,9 +19,23 @@ export class ProtonApiError extends Error {
 		readonly status: number,
 		readonly code: number | undefined,
 		message: string,
+		/** From `Retry-After`, bounded; core's retry policy honours it on 429/503. */
+		readonly retryAfterMs?: number,
 	) {
 		super(message);
 	}
+}
+
+/** Longest wait a `Retry-After` may impose before core retries. */
+const MAX_RETRY_AFTER_MS = 15 * 60 * 1000;
+
+/** `Retry-After` as seconds or an HTTP date, clamped to [0, 15 min]; `undefined` if absent or malformed. */
+export function retryAfterMsFrom(headers: Readonly<Record<string, string>>, nowMs = Date.now()): number | undefined {
+	const raw = Object.entries(headers).find(([key]) => key.toLowerCase() === "retry-after")?.[1]?.trim();
+	if (!raw) return undefined;
+	const ms = /^\d+$/.test(raw) ? Number(raw) * 1000 : Date.parse(raw) - nowMs;
+	if (!Number.isFinite(ms)) return undefined;
+	return Math.min(Math.max(ms, 0), MAX_RETRY_AFTER_MS);
 }
 
 export interface ProtonRequest {
@@ -151,7 +166,7 @@ export class ProtonTransport {
 		if (response.status >= 400 || code === undefined || !OK_CODES.has(code)) {
 			// Route without query or identifiers, and no free-text detail: this message is
 			// logged, and Proton's text or the path can carry an email or the fork selector.
-			throw new ProtonApiError(response.status, code, `${method} ${sanitizeRoute(path)} failed (${response.status}${code === undefined ? "" : `/${code}`})`);
+			throw new ProtonApiError(response.status, code, `${method} ${sanitizeRoute(path)} failed (${response.status}${code === undefined ? "" : `/${code}`})`, retryAfterMsFrom(response.headers));
 		}
 		return parsed as Readonly<Record<string, JsonValue>>;
 	}
@@ -228,7 +243,9 @@ export class ProtonTransport {
 			},
 			tokens,
 		);
-		if (response.status === 429) failBackend("rate_limit", "Proton rate-limited the session refresh");
+		if (response.status === 429) {
+			throw toBackendError(backendError("rate_limit", "Proton rate-limited the session refresh", { retryAfterMs: retryAfterMsFrom(response.headers) }));
+		}
 		if (response.status >= 400 && response.status < 500) return null;
 		if (response.status !== 200) failBackend("transient", `Proton session refresh failed (${response.status})`);
 		const data = await response.json();

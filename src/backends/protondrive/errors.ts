@@ -50,7 +50,7 @@ export function translateProtonError(err: unknown): BackendErrorShape {
 	// SDK messages are not ours to vet: scrub them before they become a logged message.
 	const message = err instanceof Error ? scrub(err.message) : "Proton Drive request failed";
 	if (err instanceof ProtonApiError) {
-		return fromCode(err.code, message) ?? backendErrorFromStatus(err.status, message);
+		return fromCode(err.code, message) ?? backendErrorFromStatus(err.status, message, undefined, err.retryAfterMs);
 	}
 	if (typeof err !== "object" || err === null) return backendError("transient", message);
 	const name = err instanceof Error ? err.name : "";

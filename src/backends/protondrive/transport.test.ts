@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { BackendHttpClient, BackendHttpRequest, JsonValue } from "../../backend-api";
-import { ProtonApiError, ProtonTransport } from "./transport";
+import { ProtonApiError, ProtonTransport, retryAfterMsFrom } from "./transport";
 import type { ProtonSession } from "./session";
 import { SessionHandle, saveSession } from "./session";
 
@@ -154,5 +154,23 @@ describe("ProtonTransport host allowlist", () => {
 		const response = await transport.fetch(sdkRequest("https://fra-storage.proton.me/storage/blocks/abc"));
 		expect(response.status).toBe(401);
 		expect(requests.some((r) => r.url.endsWith("/auth/v4/refresh"))).toBe(false);
+	});
+});
+
+describe("Retry-After", () => {
+	it("is read as seconds or an HTTP date and clamped to 15 minutes", () => {
+		expect(retryAfterMsFrom({ "Retry-After": "7" })).toBe(7000);
+		expect(retryAfterMsFrom({ "retry-after": "999999" })).toBe(15 * 60 * 1000);
+		expect(retryAfterMsFrom({ "retry-after": new Date(10_000).toUTCString() }, 4_000)).toBe(6000);
+		expect(retryAfterMsFrom({ "retry-after": "soon" })).toBeUndefined();
+		expect(retryAfterMsFrom({})).toBeUndefined();
+	});
+
+	it("reaches the error of a rate-limited API call", async () => {
+		const http: BackendHttpClient = {
+			request: () => Promise.resolve({ ...reply(429, { Code: 2028 }), headers: { "content-type": "application/json", "retry-after": "3" } }),
+		};
+		const err = await new ProtonTransport(http, null).json("GET", "core/v4/users").catch((e: unknown) => e);
+		expect(err).toMatchObject({ status: 429, retryAfterMs: 3000 });
 	});
 });

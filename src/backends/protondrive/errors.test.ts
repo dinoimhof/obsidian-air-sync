@@ -36,4 +36,9 @@ describe("translateProtonError for provider-side change", () => {
 			});
 		}
 	});
+
+	it("carries a bounded retry hint from Retry-After on 429 and 503", () => {
+		expect(translateProtonError(new ProtonApiError(429, 2028, "x", 7000))).toMatchObject({ kind: "rate_limit", retryAfterMs: 7000 });
+		expect(translateProtonError(new ProtonApiError(503, undefined, "x", 2000))).toMatchObject({ kind: "transient", retryAfterMs: 2000 });
+	});
 });
