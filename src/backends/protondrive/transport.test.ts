@@ -1,6 +1,8 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { BackendHttpClient, BackendHttpRequest, JsonValue } from "../../backend-api";
 import { ProtonApiError, ProtonTransport } from "./transport";
+import type { ProtonSession } from "./session";
+import { SessionHandle, saveSession } from "./session";
 
 beforeAll(() => {
 	vi.stubGlobal("window", { setTimeout, clearTimeout });
@@ -58,5 +60,99 @@ describe("ProtonTransport error messages", () => {
 		const { transport } = failingTransport(429, { Code: 2028 });
 		const err = await transport.json("GET", "core/v4/users").catch((e: unknown) => e);
 		expect(err).toMatchObject({ status: 429, code: 2028 });
+	});
+});
+
+describe("ProtonTransport host allowlist", () => {
+	async function sessionTransport(statusFor: (url: string) => number) {
+		const values = new Map<string, string>();
+		const secrets = {
+			get: (key: string) => Promise.resolve(values.get(key) ?? null),
+			set: (key: string, value: string) => Promise.resolve(void values.set(key, value)),
+			delete: (key: string) => Promise.resolve(void values.delete(key)),
+		};
+		await saveSession(secrets, { uid: "UID", accessToken: "AT", refreshToken: "RT", keyPassword: "KP" } as ProtonSession);
+		const requests: BackendHttpRequest[] = [];
+		const http: BackendHttpClient = {
+			request: (request) => {
+				requests.push(request);
+				return Promise.resolve(reply(statusFor(request.url), { Code: 1000 }));
+			},
+		};
+		return { transport: new ProtonTransport(http, await SessionHandle.open(secrets)), requests };
+	}
+
+	const sdkRequest = (url: string) => ({ url, method: "GET", headers: new Headers(), timeoutMs: 1000 });
+
+	it("refuses http and non-Proton hosts before sending anything", async () => {
+		const { transport, requests } = await sessionTransport(() => 200);
+		for (const url of [
+			"http://drive-api.proton.me/core/v4/users",
+			"https://evil.example/block",
+			"https://proton.me.evil.example/block",
+			"https://notproton.me/block",
+		]) {
+			await expect(transport.fetch(sdkRequest(url))).rejects.toMatchObject({ kind: "permanent" });
+		}
+		expect(requests).toHaveLength(0);
+	});
+
+	it("refuses URLs that other parsers could read as a different host", async () => {
+		const { transport, requests } = await sessionTransport(() => 200);
+		for (const url of [
+			"https://drive-api.proton.me\\@evil.example/x",
+			"https://proton.me@evil.example/x",
+			"https://user:pw@drive-api.proton.me/x",
+			"https://drive-api.proton.me/a b",
+			"https://drive-api.proton.me/a\tb",
+		]) {
+			await expect(transport.fetch(sdkRequest(url))).rejects.toMatchObject({ kind: "permanent" });
+		}
+		expect(requests).toHaveLength(0);
+	});
+
+	it("sends the normalized URL it validated", async () => {
+		const { transport, requests } = await sessionTransport(() => 200);
+		await transport.fetch(sdkRequest("https://DRIVE-API.proton.me/core/v4/users"));
+		expect(requests[0]?.url).toBe("https://drive-api.proton.me/core/v4/users");
+	});
+
+	it("refreshes on a 401 from the API host and replays with the new token", async () => {
+		const values = new Map<string, string>();
+		const secrets = {
+			get: (key: string) => Promise.resolve(values.get(key) ?? null),
+			set: (key: string, value: string) => Promise.resolve(void values.set(key, value)),
+			delete: (key: string) => Promise.resolve(void values.delete(key)),
+		};
+		await saveSession(secrets, { uid: "UID", accessToken: "AT", refreshToken: "RT", keyPassword: "KP" } as ProtonSession);
+		const requests: BackendHttpRequest[] = [];
+		const http: BackendHttpClient = {
+			request: (request) => {
+				requests.push(request);
+				if (request.url.endsWith("/auth/v4/refresh")) {
+					return Promise.resolve(reply(200, { Code: 1000, UID: "UID", AccessToken: "AT2", RefreshToken: "RT2" }));
+				}
+				return Promise.resolve(reply(request.headers?.authorization === "Bearer AT2" ? 200 : 401, { Code: 1000 }));
+			},
+		};
+		const transport = new ProtonTransport(http, await SessionHandle.open(secrets));
+
+		await expect(transport.json("GET", "core/v4/users")).resolves.toMatchObject({ Code: 1000 });
+
+		expect(requests.map((r) => new URL(r.url).pathname)).toEqual(["/core/v4/users", "/auth/v4/refresh", "/core/v4/users"]);
+		expect(requests[2]?.headers?.authorization).toBe("Bearer AT2");
+	});
+
+	it("allows Proton storage hosts", async () => {
+		const { transport, requests } = await sessionTransport(() => 200);
+		await transport.fetch(sdkRequest("https://fra-storage.proton.me/storage/blocks/abc"));
+		expect(requests.map((r) => new URL(r.url).hostname)).toEqual(["fra-storage.proton.me"]);
+	});
+
+	it("refreshes the session only for a 401 from the API host, never from storage", async () => {
+		const { transport, requests } = await sessionTransport((url) => (url.includes("storage") ? 401 : 200));
+		const response = await transport.fetch(sdkRequest("https://fra-storage.proton.me/storage/blocks/abc"));
+		expect(response.status).toBe(401);
+		expect(requests.some((r) => r.url.endsWith("/auth/v4/refresh"))).toBe(false);
 	});
 });

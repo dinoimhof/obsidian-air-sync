@@ -1,6 +1,6 @@
 import type { BackendHttpClient, BackendHttpMethod, BackendHttpResponse, JsonValue } from "../../backend-api";
 import { failBackend } from "../shared/error-shape";
-import { PROTON_API_BASE, PROTON_APP_VERSION } from "./constants";
+import { PROTON_API_BASE, PROTON_API_HOST, PROTON_APP_VERSION } from "./constants";
 import type { SessionHandle, SessionTokens } from "./session";
 import { parseSessionTokens } from "./session";
 import { sanitizeRoute } from "./redact";
@@ -62,6 +62,49 @@ function withDeadline<T>(work: Promise<T>, timeoutMs: number, signal: AbortSigna
 	});
 }
 
+/** Proton's own domain; the SDK's storage block URLs are regional `*-storage.proton.me` hosts. */
+const PROTON_DOMAIN = "proton.me";
+
+/**
+ * Every request carries the session, so it may only go to Proton over https. Storage block
+ * URLs come from server responses; a URL naming any other host is refused before it is sent.
+ * Returns the normalized URL, which is what gets sent: a raw string that parses differently
+ * here than in the platform's HTTP stack (a backslash or userinfo trick) never reaches it.
+ */
+function hasAmbiguousCharacter(url: string): boolean {
+	for (let i = 0; i < url.length; i++) {
+		const code = url.charCodeAt(i);
+		if (code <= 0x20 || code === 0x7f || code === 0x5c /* \\ */) return true;
+	}
+	return /\s/.test(url);
+}
+
+function protonUrl(url: string): string {
+	// Backslashes, whitespace and control characters parse differently across URL parsers.
+	if (hasAmbiguousCharacter(url)) failBackend("permanent", "Refused a malformed Proton Drive request URL");
+	let parsed: URL;
+	try {
+		parsed = new URL(url);
+	} catch {
+		failBackend("permanent", "Refused a malformed Proton Drive request URL");
+	}
+	const host = parsed.hostname.toLowerCase();
+	const onProton = host === PROTON_DOMAIN || host.endsWith(`.${PROTON_DOMAIN}`);
+	if (parsed.protocol !== "https:" || !onProton || parsed.username !== "" || parsed.password !== "") {
+		failBackend("permanent", "Refused a Proton Drive request to a host outside https://*.proton.me");
+	}
+	return parsed.href;
+}
+
+/**
+ * Only the API host's 401 triggers a session refresh. Storage requests authenticate with
+ * their block token (the SDK renews an expired one on a 404), so a storage 401 is surfaced
+ * rather than rotating the session; the live checklist watches for one.
+ */
+function isApiHost(url: string): boolean {
+	return new URL(url).hostname.toLowerCase() === PROTON_API_HOST;
+}
+
 /** Proton's own auth routes, which a 401 must not recurse into. */
 function isAuthRoute(url: string): boolean {
 	const path = new URL(url).pathname.toLowerCase();
@@ -88,7 +131,7 @@ export class ProtonTransport {
 	async send(request: ProtonRequest): Promise<BackendHttpResponse> {
 		const tokens = this.session?.current;
 		const response = await this.dispatch(request, tokens);
-		if (response.status !== 401 || !tokens || !this.session || isAuthRoute(request.url)) return response;
+		if (response.status !== 401 || !tokens || !this.session || !isApiHost(request.url) || isAuthRoute(request.url)) return response;
 		await this.session.refresh(tokens.accessToken, (current) => this.refreshTokens(current));
 		return this.dispatch(request, this.session.current);
 	}
@@ -155,13 +198,14 @@ export class ProtonTransport {
 	}
 
 	private dispatch(request: ProtonRequest, tokens: SessionTokens | undefined): Promise<BackendHttpResponse> {
+		const url = protonUrl(request.url);
 		const headers: Record<string, string> = { ...request.headers, "x-pm-appversion": PROTON_APP_VERSION };
 		if (tokens) {
 			headers["x-pm-uid"] = tokens.uid;
 			headers.authorization = `Bearer ${tokens.accessToken}`;
 		}
 		const work = this.http.request({
-			url: request.url,
+			url,
 			method: toMethod(request.method),
 			headers,
 			body: request.body,
