@@ -43,7 +43,7 @@ Proton cannot redirect back to Obsidian, so the module declares `auth.completion
 - **Checksum**: the plaintext SHA-1 the uploader stored in the encrypted extended attributes, projected as `sha1`. Air Sync always uploads with its SHA-1, and the SDK refuses the upload if the bytes differ. Files uploaded by clients that omit the digest have no checksum, so core treats them as unverifiable instead of comparing them. A version-bound `read` recomputes the SHA-1 of the downloaded bytes and returns `unverifiable` if it disagrees with the claim, because core compares files by that claim without downloading them.
 - **Capabilities**: Proton refuses a second node with the same name in a folder (`exclusiveCreate`). It offers no precondition core can carry: a new revision is checked against the active revision the SDK reads just before it, not against core's observation, and move, rename and trash take no version. So `conditionalContentUpdate` is `"none"` and `conditionalMetadataMutation` is `false`; the adapter compares before mutating.
 - **Delete** moves the node to Proton's trash.
-- **Move with rename** is two calls, because the SDK has none that does both. The adapter checks both folders first. It renames in the source folder and then moves, or, when the new name is taken in the source folder, moves first and renames in the destination. A clash in the destination, or in both orders, fails as `target_changed` before any provider call, so a node is never left half-moved.
+- **Move with rename** is two calls, because the SDK has none that does both. The adapter checks both folders first. It renames in the source folder and then moves, or, when the new name is taken in the source folder, moves first and renames in the destination. A clash that can be seen up front (in the destination, or in both orders) fails as `target_changed` before any provider call. If the second call itself fails (a timeout, or a name taken in between), the node stays at its intermediate address and the next cycle re-observes it.
 
 ### Change feed
 
@@ -132,7 +132,7 @@ Node uids stay in messages: they are opaque, and they are needed to diagnose a s
 | Decrypted keys lingering in memory | One connection per runtime context. Disconnect releases the crypto endpoint, which clears its key store, and a revoked context never reconnects. |
 | Hostile or malformed remote names | A name that cannot be one path segment fails closed, and Air Sync never writes such a name. |
 | Bytes that disagree with their claimed SHA-1 | A version-bound read recomputes the SHA-1 and refuses a mismatch, after the SDK's signature checks. |
-| Proton changing the API, events or crypto | An unknown event type triggers a rescan, code 5003 is a permanent "update" error, an offline smoke test runs on every SDK bump, and pinned versions with a lockfile `npm ci` accepts. |
+| Proton changing the API, events or crypto | An unknown event type triggers a rescan, and code 5003 is a permanent "update" error. The SDK upgrade runbook includes an offline smoke test (run by hand, not in the gate), and versions are pinned with a lockfile `npm ci` accepts. |
 
 **What it cannot fix (residual risks):**
 
@@ -148,6 +148,8 @@ Node uids stay in messages: they are opaque, and they are needed to diagnose a s
 ## Bundle and licensing
 
 `@protontech/crypto` (GPL-3.0) and Proton's OpenPGP.js fork (LGPL-3.0) are bundled into `main.js` with the SDK (MIT), about 770 KB minified of the 1.2 MB bundle. A build that includes this backend is therefore distributed under the GPL-3.0 terms of the combined work.
+
+**Lazy load.** `module.ts` loads `sdk-client.ts` (and with it the SDK, the crypto package and the polyfills) only on first Proton Drive use. An install that never uses Proton Drive never evaluates any of it, so a runtime that cannot run the SDK breaks only this backend. The polyfill guard pins this.
 
 **Polyfills.** `polyfills.ts` is the first import of `sdk-client.ts`, so it runs before any `@protontech` module. It first probes `toHex`, `toBase64`, `fromHex` and `fromBase64` by calling them on known values and deletes any that exist but do not work (`broken-builtins.ts`). Then core-js installs spec-complete versions of whatever is missing. core-js alone repairs a broken `toHex`/`toBase64`, but it keeps a present `fromHex` and a `fromBase64` that throws, and a partial rollout of exactly this kind (`toHex` present but not callable) crashed the first SDK call in live testing. `protondrive-polyfill-guard.test.mjs` pins both the repair and the import order.
 

@@ -34,11 +34,11 @@ import type { ProtonTransport } from "./transport";
 import { ProtonApiError } from "./transport";
 import { failBackend } from "../shared/error-shape";
 
-/** Core API codes for "no such address" / "address is external" on `core/v4/keys/all`. */
 const ADDRESS_PAGE_SIZE = 50;
 /** 1,000 addresses; far beyond any plan, it only bounds a misbehaving listing. */
 const MAX_ADDRESS_PAGES = 20;
 
+/** Core API codes for "no such address" / "address is external" on `core/v4/keys/all`. */
 const ADDRESS_NOT_FOUND_CODES: ReadonlySet<number> = new Set([33_102, 33_103]);
 
 interface AddressKeyDto {

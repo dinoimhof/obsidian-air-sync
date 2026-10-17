@@ -172,13 +172,16 @@ retries and quarantines persistent failures.
 ## 10. Polyfills and forward compatibility
 
 `core-js` patches `Uint8Array` base64/hex, `Array.fromAsync`, iterator helpers and
-`Promise.withResolvers` only where they are missing or misbehave. Its detection calls the
-methods; it does not just check their type. That covers the partial Electron rollout seen
-in live testing. The crypto package's types come from a hand-written declaration mapped
-through `tsconfig.paths`.
+`Promise.withResolvers` only where they are missing or misbehave. Testing it against the
+partial Electron rollout seen live showed a gap. It repairs a broken `toHex`/`toBase64`,
+but it keeps any present `fromHex` (no behaviour check) and a `fromBase64` that throws on
+every input (its probe tests only two edge cases). The crypto package's types come from a
+hand-written declaration mapped through `tsconfig.paths`.
 
-**Keep core-js, and pin it with tests.**
-- A unit test simulates the partial rollout.
+**Keep core-js, close the gap, and pin it with tests.**
+- A small module that runs first probes all four hex/base64 methods by calling them and
+  deletes the broken ones, so core-js installs spec-complete versions.
+- A unit test simulates the partial rollout, and a guard runs the real bundle against it.
 - The polyfills must evaluate before any `@protontech` module.
 - An offline smoke test bundles the real SDK and crypto, then runs key import plus an
   encrypt, decrypt, sign and verify round trip and builds a `ProtonDriveClient`. This
