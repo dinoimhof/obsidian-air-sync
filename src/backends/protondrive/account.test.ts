@@ -87,3 +87,37 @@ describe("ProtonAccount when reconnecting cannot help", () => {
 		expect(own.map((address) => address.addressId)).toEqual(["a1"]);
 	});
 });
+
+describe("ProtonAccount primary address, primary key and pagination", () => {
+	const opens = {
+		importPrivateKey: (() => Promise.resolve({})) as unknown as CryptoApiInterface["importPrivateKey"],
+	};
+	const address = (id: string, priority: number | undefined, keys: JsonValue = [{ ID: `${id}-k`, PrivateKey: "armored" }]) =>
+		({ ID: id, Email: `${id}@example.org`, Keys: keys, ...(priority === undefined ? {} : { Priority: priority }) });
+
+	it("takes the primary address by Priority, falling back to the API's order", async () => {
+		expect((await account([address("b", 2), address("a", 1)], [], opens).getOwnPrimaryAddress()).addressId).toBe("a");
+		expect((await account([address("b", undefined), address("a", undefined)], [], opens).getOwnPrimaryAddress()).addressId).toBe("b");
+	});
+
+	it("takes the primary key by its Primary flag", async () => {
+		const keys = [{ ID: "k1", PrivateKey: "armored", Primary: 0 }, { ID: "k2", PrivateKey: "armored", Primary: 1 }];
+		const own = await account([address("a", 1, keys)], [], opens).getOwnPrimaryAddress();
+		expect(own.keys[own.primaryKeyIndex]?.id).toBe("k2");
+	});
+
+	it("reads every page of addresses (pagination)", async () => {
+		const pages = [Array.from({ length: 50 }, (_, i) => address(`p0-${i}`, i + 1)), [address("p1-0", 51), address("p1-1", 52)]];
+		const requested: string[] = [];
+		const transport = {
+			json: (_method: string, path: string) => {
+				requested.push(path);
+				const page = Number(/Page=(\d+)/.exec(path)?.[1] ?? 0);
+				return Promise.resolve({ Code: 1000, Addresses: pages[page] ?? [] });
+			},
+		} as unknown as ProtonTransport;
+		const own = await new ProtonAccount(transport, opens as unknown as CryptoApiInterface, "kp" as KeyPassword).getOwnAddresses();
+		expect(own).toHaveLength(52);
+		expect(requested).toEqual(["core/v4/addresses?Page=0&PageSize=50", "core/v4/addresses?Page=1&PageSize=50"]);
+	});
+});

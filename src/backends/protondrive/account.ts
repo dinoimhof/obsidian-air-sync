@@ -35,6 +35,10 @@ import { ProtonApiError } from "./transport";
 import { failBackend } from "../shared/error-shape";
 
 /** Core API codes for "no such address" / "address is external" on `core/v4/keys/all`. */
+const ADDRESS_PAGE_SIZE = 50;
+/** 1,000 addresses; far beyond any plan, it only bounds a misbehaving listing. */
+const MAX_ADDRESS_PAGES = 20;
+
 const ADDRESS_NOT_FOUND_CODES: ReadonlySet<number> = new Set([33_102, 33_103]);
 
 interface AddressKeyDto {
@@ -42,12 +46,16 @@ interface AddressKeyDto {
 	readonly privateKey: string;
 	readonly token?: string;
 	readonly signature?: string;
+	/** The address's primary key (`Primary: 1`; one per address). */
+	readonly primary: boolean;
 }
 
 interface AddressDto {
 	readonly id: string;
 	readonly email: string;
 	readonly keys: readonly AddressKeyDto[];
+	/** `Priority` (lowest first; replaces the deprecated `Order`), when the API reports it. */
+	readonly priority?: number;
 }
 
 interface UserKeys {
@@ -73,9 +81,12 @@ function parseAddress(raw: Readonly<Record<string, JsonValue>>): AddressDto | nu
 	for (const key of records(raw.Keys)) {
 		const keyId = str(key.ID);
 		const privateKey = str(key.PrivateKey);
-		if (keyId && privateKey) keys.push({ id: keyId, privateKey, token: str(key.Token), signature: str(key.Signature) });
+		if (keyId && privateKey) {
+			keys.push({ id: keyId, privateKey, token: str(key.Token), signature: str(key.Signature), primary: key.Primary === 1 });
+		}
 	}
-	return { id, email, keys };
+	const priority = typeof raw.Priority === "number" ? raw.Priority : typeof raw.Order === "number" ? raw.Order : undefined;
+	return { id, email, keys, priority };
 }
 
 /**
@@ -139,15 +150,31 @@ export class ProtonAccount implements ProtonDriveAccount {
 	}
 
 	private addresses(): Promise<readonly AddressDto[]> {
-		this.addressesPromise ??= this.transport.json("GET", "core/v4/addresses?Page=0&PageSize=50").then((response) => {
-			const parsed = records(response.Addresses).map(parseAddress).filter((a): a is AddressDto => a !== null);
-			if (parsed.length === 0) throw new Error("Proton account has no address");
-			return parsed;
-		});
+		this.addressesPromise ??= this.loadAddresses();
 		this.addressesPromise.catch(() => {
 			this.addressesPromise = undefined;
 		});
 		return this.addressesPromise;
+	}
+
+	/**
+	 * Every address, primary first. The API lists them by priority (Proton's own account
+	 * module takes the first as primary); sorting by `Priority` keeps that true should the
+	 * listing order ever change. Pages until a short page, bounded.
+	 */
+	private async loadAddresses(): Promise<readonly AddressDto[]> {
+		const parsed: AddressDto[] = [];
+		for (let page = 0; page < MAX_ADDRESS_PAGES; page++) {
+			const response = await this.transport.json("GET", `core/v4/addresses?Page=${page}&PageSize=${ADDRESS_PAGE_SIZE}`);
+			const rows = records(response.Addresses);
+			parsed.push(...rows.map(parseAddress).filter((a): a is AddressDto => a !== null));
+			if (rows.length < ADDRESS_PAGE_SIZE) break;
+		}
+		if (parsed.length === 0) throw new Error("Proton account has no address");
+		if (parsed.every((address) => address.priority !== undefined)) {
+			parsed.sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+		}
+		return parsed;
 	}
 
 	private userKeys(): Promise<UserKeys> {
@@ -196,7 +223,10 @@ export class ProtonAccount implements ProtonDriveAccount {
 			}
 			failBackend("permanent", "No key of one of the account's Proton addresses can be opened");
 		}
-		return { email: address.email, addressId: address.id, primaryKeyIndex: 0, keys };
+		// The flagged primary key when it opened; else the first that did, as Proton's own module does.
+		const primaryId = address.keys.find((key) => key.primary)?.id;
+		const primaryKeyIndex = Math.max(0, keys.findIndex((key) => key.id === primaryId));
+		return { email: address.email, addressId: address.id, primaryKeyIndex, keys };
 	}
 
 	private addressKey(key: AddressKeyDto): Promise<{ id: string; key: PrivateKeyReference }> {
